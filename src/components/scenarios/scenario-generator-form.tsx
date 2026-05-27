@@ -111,7 +111,7 @@ export function ScenarioGeneratorForm({ onGenerated }: Props) {
             onChange={(event) =>
               setContextType(event.target.value as ScenarioListItem["contextType"])
             }
-            className="w-full rounded-md border border-slate-300 px-3 py-2"
+            className="field-input"
           >
             {CONTEXT_OPTIONS.map((option) => (
               <option key={option.value} value={option.value}>
@@ -128,7 +128,7 @@ export function ScenarioGeneratorForm({ onGenerated }: Props) {
             onChange={(event) =>
               setDifficulty(event.target.value as "beginner" | "intermediate" | "advanced")
             }
-            className="w-full rounded-md border border-slate-300 px-3 py-2"
+            className="field-input"
           >
             <option value="beginner">Beginner</option>
             <option value="intermediate">Intermediate</option>
@@ -145,7 +145,7 @@ export function ScenarioGeneratorForm({ onGenerated }: Props) {
                 event.target.value as "child" | "adolescent" | "adult" | "older_adult",
               )
             }
-            className="w-full rounded-md border border-slate-300 px-3 py-2"
+            className="field-input"
           >
             <option value="child">Child</option>
             <option value="adolescent">Adolescent</option>
@@ -163,7 +163,7 @@ export function ScenarioGeneratorForm({ onGenerated }: Props) {
                 event.target.value as "doctor" | "self" | "school" | "family" | "other",
               )
             }
-            className="w-full rounded-md border border-slate-300 px-3 py-2"
+            className="field-input"
           >
             <option value="doctor">Doctor</option>
             <option value="self">Self</option>
@@ -225,7 +225,7 @@ export function ScenarioGeneratorForm({ onGenerated }: Props) {
           value={focusAreas}
           onChange={(event) => setFocusAreas(event.target.value)}
           placeholder="safety screening, family systems, motivational interviewing"
-          className="w-full rounded-md border border-slate-300 px-3 py-2"
+          className="field-input"
         />
       </label>
 

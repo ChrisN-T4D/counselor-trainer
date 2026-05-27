@@ -263,7 +263,7 @@ export function SessionReviewPanel({ sessionId }: { sessionId: string }) {
               onChange={(event) => setLearnerConclusions(event.target.value)}
               rows={4}
               required
-              className="w-full rounded-md border border-slate-300 px-3 py-2"
+              className="field-input"
             />
           </label>
           <label className="block text-sm">
@@ -275,7 +275,7 @@ export function SessionReviewPanel({ sessionId }: { sessionId: string }) {
               onChange={(event) => setLearnerWhatILearned(event.target.value)}
               rows={4}
               required
-              className="w-full rounded-md border border-slate-300 px-3 py-2"
+              className="field-input"
             />
           </label>
           <label className="block text-sm">
@@ -287,7 +287,7 @@ export function SessionReviewPanel({ sessionId }: { sessionId: string }) {
               onChange={(event) => setLearnerInterventionRationale(event.target.value)}
               rows={4}
               required
-              className="w-full rounded-md border border-slate-300 px-3 py-2"
+              className="field-input"
             />
           </label>
           <button

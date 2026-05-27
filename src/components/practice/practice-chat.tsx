@@ -174,7 +174,7 @@ export function PracticeChat({ sessionId }: { sessionId: string }) {
             onChange={(event) => setInput(event.target.value)}
             placeholder="Respond as the therapist..."
             rows={3}
-            className="w-full rounded-md border border-slate-300 px-3 py-2"
+            className="field-input"
             disabled={sending}
           />
           <div className="flex gap-3">

@@ -64,7 +64,7 @@ export function RegisterForm() {
           name="name"
           type="text"
           required
-          className="w-full rounded-md border border-slate-300 px-3 py-2"
+          className="field-input"
         />
       </div>
       <div>
@@ -76,7 +76,7 @@ export function RegisterForm() {
           name="email"
           type="email"
           required
-          className="w-full rounded-md border border-slate-300 px-3 py-2"
+          className="field-input"
         />
       </div>
       <div>
@@ -89,7 +89,7 @@ export function RegisterForm() {
           type="password"
           required
           minLength={8}
-          className="w-full rounded-md border border-slate-300 px-3 py-2"
+          className="field-input"
         />
       </div>
       {error && <p className="text-sm text-red-600">{error}</p>}
