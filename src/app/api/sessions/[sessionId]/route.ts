@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/auth";
+import { canViewLearnerSession } from "@/lib/auth/session-access";
 import { db } from "@/lib/db";
 import { finalizeSessionMemory } from "@/lib/memory/client-case-service";
 import { formatContextType } from "@/lib/scenarios/labels";
@@ -15,7 +16,7 @@ export async function GET(_request: Request, { params }: RouteParams) {
 
   const { sessionId } = await params;
   const practiceSession = await db.session.findFirst({
-    where: { id: sessionId, userId: session.user.id },
+    where: { id: sessionId },
     include: {
       scenario: true,
       clientCase: { select: { id: true, sessionCount: true } },
@@ -23,7 +24,10 @@ export async function GET(_request: Request, { params }: RouteParams) {
     },
   });
 
-  if (!practiceSession) {
+  if (
+    !practiceSession ||
+    !canViewLearnerSession(session.user.role, session.user.id, practiceSession.userId)
+  ) {
     return NextResponse.json({ error: "Session not found" }, { status: 404 });
   }
 

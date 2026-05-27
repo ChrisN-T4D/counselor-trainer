@@ -2,14 +2,11 @@ import Link from "next/link";
 import { auth } from "@/auth";
 import { AppHeader } from "@/components/layout/app-header";
 import { MyCasesPanel } from "@/components/dashboard/my-cases-panel";
+import { canAccessAdmin, canAccessSupervisor } from "@/lib/auth/roles";
 import { db } from "@/lib/db";
+import { formatHours } from "@/lib/format";
 
 export const dynamic = "force-dynamic";
-
-function formatHours(seconds: number) {
-  const hours = seconds / 3600;
-  return hours < 0.1 ? "< 0.1 hr" : `${hours.toFixed(1)} hr`;
-}
 
 export default async function DashboardPage() {
   const session = await auth();
@@ -69,6 +66,29 @@ export default async function DashboardPage() {
           </h1>
           <p className="mt-1 text-slate-600">Track your practice and review progress.</p>
         </div>
+
+        {(canAccessSupervisor(session?.user?.role) || canAccessAdmin(session?.user?.role)) && (
+          <div className="mb-8 flex flex-wrap gap-3">
+            {canAccessSupervisor(session?.user?.role) && (
+              <Link
+                href="/supervisor"
+                className="rounded-lg border border-slate-200 bg-white px-4 py-3 text-sm hover:border-slate-300"
+              >
+                <p className="font-medium text-slate-900">Supervisor dashboard</p>
+                <p className="text-slate-600">Monitor learners, sessions, and cases</p>
+              </Link>
+            )}
+            {canAccessAdmin(session?.user?.role) && (
+              <Link
+                href="/admin"
+                className="rounded-lg border border-slate-200 bg-white px-4 py-3 text-sm hover:border-slate-300"
+              >
+                <p className="font-medium text-slate-900">Admin dashboard</p>
+                <p className="text-slate-600">Platform analytics and scenario catalog</p>
+              </Link>
+            )}
+          </div>
+        )}
 
         <div className="grid gap-4 sm:grid-cols-2">
           <div className="rounded-lg border border-slate-200 bg-white p-5">
