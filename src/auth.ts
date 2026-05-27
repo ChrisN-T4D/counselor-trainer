@@ -1,3 +1,4 @@
+import "@/lib/load-auth-env";
 import NextAuth from "next-auth";
 import Credentials from "next-auth/providers/credentials";
 import { compare } from "bcryptjs";
@@ -12,7 +13,6 @@ const credentialsSchema = z.object({
 
 export const { handlers, signIn, signOut, auth } = NextAuth({
   ...authConfig,
-  trustHost: true,
   providers: [
     Credentials({
       name: "Credentials",

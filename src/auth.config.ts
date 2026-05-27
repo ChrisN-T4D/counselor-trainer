@@ -2,6 +2,7 @@ import type { NextAuthConfig } from "next-auth";
 import type { Role } from "@/generated/prisma/client";
 
 export const authConfig = {
+  trustHost: true,
   pages: {
     signIn: "/login",
   },
@@ -10,24 +11,6 @@ export const authConfig = {
   },
   providers: [],
   callbacks: {
-    authorized({ auth, request }) {
-      const { pathname } = request.nextUrl;
-      const isLoggedIn = !!auth?.user;
-      const protectedPrefixes = ["/dashboard", "/scenarios", "/practice", "/review"];
-      const isProtected = protectedPrefixes.some(
-        (prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`),
-      );
-
-      if (isProtected) {
-        return isLoggedIn;
-      }
-
-      if (isLoggedIn && (pathname === "/login" || pathname === "/register")) {
-        return Response.redirect(new URL("/dashboard", request.nextUrl));
-      }
-
-      return true;
-    },
     jwt({ token, user }) {
       if (user) {
         token.id = user.id!;
