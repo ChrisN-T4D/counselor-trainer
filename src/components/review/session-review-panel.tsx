@@ -14,10 +14,40 @@ type Message = {
   sequence: number;
 };
 
+type RelationshipSnapshot = {
+  trust: number;
+  openness: number;
+  alliance: number;
+  resistance: number;
+  deception: number;
+  dropoutRisk: number;
+};
+
+type SafetySnapshot = {
+  siLevel: string;
+  hiLevel: string;
+  escalationRisk: number;
+  selfHarmRisk: number;
+  substanceUseSeverity: number;
+  immediateSafetyConcern: boolean;
+};
+
+type StateSnapshot = {
+  id: string;
+  sessionNumber: number | null;
+  source: string;
+  relationship: RelationshipSnapshot;
+  safety: SafetySnapshot;
+  rationale: string | null;
+};
+
 type ReviewData = {
   session: {
     id: string;
     status: string;
+    sessionNumber: number;
+    clientCaseId: string | null;
+    episodicSummary: string | null;
     practiceSeconds: number;
     messages: Message[];
     scenario: {
@@ -33,8 +63,26 @@ type ReviewData = {
       learnerWhatILearned: string | null;
       learnerInterventionRationale: string | null;
     } | null;
+    stateSnapshots: StateSnapshot[];
   };
 };
+
+function MetricBar({ label, value }: { label: string; value: number }) {
+  return (
+    <div>
+      <div className="flex justify-between text-xs text-slate-600">
+        <span>{label}</span>
+        <span>{value}</span>
+      </div>
+      <div className="mt-1 h-2 rounded-full bg-slate-200">
+        <div
+          className="h-2 rounded-full bg-slate-700"
+          style={{ width: `${Math.min(100, Math.max(0, value))}%` }}
+        />
+      </div>
+    </div>
+  );
+}
 
 export function SessionReviewPanel({ sessionId }: { sessionId: string }) {
   const [data, setData] = useState<ReviewData | null>(null);
@@ -110,8 +158,53 @@ export function SessionReviewPanel({ sessionId }: { sessionId: string }) {
         <h1 className="text-2xl font-semibold text-slate-900">Session review</h1>
         <p className="mt-1 text-slate-600">
           {data.session.scenario.title} · {data.session.scenario.contextLabel}
+          {data.session.sessionNumber > 1 ? ` · Session ${data.session.sessionNumber}` : ""}
         </p>
       </div>
+
+      {data.session.episodicSummary && (
+        <section className="rounded-lg border border-slate-200 bg-white p-5">
+          <h2 className="text-lg font-semibold text-slate-900">Session memory summary</h2>
+          <p className="mt-2 text-sm text-slate-700">{data.session.episodicSummary}</p>
+        </section>
+      )}
+
+      {data.session.stateSnapshots.length > 0 && (
+        <section className="rounded-lg border border-slate-200 bg-white p-5">
+          <h2 className="text-lg font-semibold text-slate-900">Relationship & safety trends</h2>
+          <p className="mt-1 text-sm text-slate-600">
+            State captured across sessions for this client case.
+          </p>
+          <div className="mt-4 space-y-6">
+            {data.session.stateSnapshots.map((snapshot) => (
+              <article key={snapshot.id} className="rounded-md border border-slate-100 bg-slate-50 p-4">
+                <p className="text-sm font-medium text-slate-800">
+                  {snapshot.source === "CASE_INIT"
+                    ? "Initial case state"
+                    : `After session ${snapshot.sessionNumber ?? "?"}`}
+                </p>
+                <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                  <MetricBar label="Trust" value={snapshot.relationship.trust} />
+                  <MetricBar label="Openness" value={snapshot.relationship.openness} />
+                  <MetricBar label="Alliance" value={snapshot.relationship.alliance} />
+                  <MetricBar label="Resistance" value={snapshot.relationship.resistance} />
+                  <MetricBar label="Deception" value={snapshot.relationship.deception} />
+                  <MetricBar label="Dropout risk" value={snapshot.relationship.dropoutRisk} />
+                  <MetricBar label="Escalation risk" value={snapshot.safety.escalationRisk} />
+                  <MetricBar label="Self-harm risk" value={snapshot.safety.selfHarmRisk} />
+                </div>
+                <p className="mt-3 text-xs text-slate-600">
+                  SI: {snapshot.safety.siLevel} · HI: {snapshot.safety.hiLevel}
+                  {snapshot.safety.immediateSafetyConcern ? " · immediate concern flagged" : ""}
+                </p>
+                {snapshot.rationale && (
+                  <p className="mt-2 text-xs text-slate-500">{snapshot.rationale}</p>
+                )}
+              </article>
+            ))}
+          </div>
+        </section>
+      )}
 
       <section className="rounded-lg border border-slate-200 bg-white p-5">
         <h2 className="text-lg font-semibold text-slate-900">Session transcript</h2>
@@ -231,9 +324,19 @@ export function SessionReviewPanel({ sessionId }: { sessionId: string }) {
         </div>
       </section>
 
-      <Link href="/dashboard" className="text-sm font-medium text-slate-900 underline">
-        Back to dashboard
-      </Link>
+      <div className="flex flex-wrap gap-4">
+        <Link href="/dashboard" className="text-sm font-medium text-slate-900 underline">
+          Back to dashboard
+        </Link>
+        {data.session.clientCaseId && (
+          <Link
+            href="/dashboard"
+            className="text-sm font-medium text-slate-900 underline"
+          >
+            Continue this case from My Cases
+          </Link>
+        )}
+      </div>
 
       {savedMessage && <p className="text-sm text-green-700">{savedMessage}</p>}
       {error && <p className="text-sm text-red-600">{error}</p>}

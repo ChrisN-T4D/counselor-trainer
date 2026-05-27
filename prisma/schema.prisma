@@ -39,56 +39,139 @@ enum ScenarioContextType {
   FAMILY
 }
 
+enum ClientCaseStatus {
+  ACTIVE
+  ARCHIVED
+}
+
+enum CaseSnapshotSource {
+  CASE_INIT
+  SESSION_END
+  MANUAL_REVIEW
+}
+
+enum MemoryChunkSourceType {
+  CASE_WRITEUP
+  SESSION_SUMMARY
+  DISCLOSED_FACT
+  RELATIONSHIP_NOTE
+  SAFETY_NOTE
+}
+
 model User {
-  id            String    @id @default(cuid())
-  email         String    @unique
+  id            String       @id @default(cuid())
+  email         String       @unique
   name          String
   passwordHash  String
-  entraObjectId String?   @unique
-  role          Role      @default(STUDENT)
-  createdAt     DateTime  @default(now())
+  entraObjectId String?      @unique
+  role          Role         @default(STUDENT)
+  createdAt     DateTime     @default(now())
   sessions      Session[]
+  clientCases   ClientCase[]
 }
 
 model Scenario {
-  id                String    @id @default(cuid())
-  title             String    @unique
-  contextType       ScenarioContextType @default(INDIVIDUAL)
-  dsmCategory       String
-  presentingProblem String
-  systemPrompt      String
-  caseWriteup       Json?
-  objectives        String[]
-  difficulty        String
-  ageGroup          String    @default("adult")
-  acuityLevel       String    @default("moderate")
-  referralSource    String?
+  id                  String              @id @default(cuid())
+  title               String              @unique
+  contextType         ScenarioContextType @default(INDIVIDUAL)
+  dsmCategory         String
+  presentingProblem   String
+  systemPrompt        String
+  caseWriteup         Json?
+  objectives          String[]
+  difficulty          String
+  ageGroup            String              @default("adult")
+  acuityLevel         String              @default("moderate")
+  referralSource      String?
   sessionParticipants String[]
-  generationSettings Json?
-  isTemplate        Boolean   @default(false)
-  sessions          Session[]
+  generationSettings  Json?
+  isTemplate          Boolean             @default(false)
+  sessions            Session[]
+  clientCases         ClientCase[]
 
   @@index([contextType])
   @@index([difficulty])
+}
+
+model ClientCase {
+  id                String           @id @default(cuid())
+  userId            String
+  scenarioId        String
+  status            ClientCaseStatus @default(ACTIVE)
+  displayName       String
+  sessionCount      Int              @default(0)
+  relationshipState Json
+  safetyState       Json
+  therapyGoalProgress Json
+  disclosedFacts    Json             @default("[]")
+  lastSessionAt     DateTime?
+  createdAt         DateTime         @default(now())
+  updatedAt         DateTime         @updatedAt
+  user              User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  scenario          Scenario         @relation(fields: [scenarioId], references: [id], onDelete: Cascade)
+  sessions          Session[]
+  memoryChunks      MemoryChunk[]
+  stateSnapshots    CaseStateSnapshot[]
+
+  @@index([userId])
+  @@index([scenarioId])
+  @@index([userId, scenarioId])
+}
+
+model CaseStateSnapshot {
+  id            String             @id @default(cuid())
+  clientCaseId  String
+  sessionId     String?
+  sessionNumber Int?
+  capturedAt    DateTime           @default(now())
+  source        CaseSnapshotSource
+  relationship  Json
+  safety        Json
+  delta         Json?
+  rationale     String?
+
+  clientCase ClientCase @relation(fields: [clientCaseId], references: [id], onDelete: Cascade)
+
+  @@index([clientCaseId, capturedAt])
+}
+
+model MemoryChunk {
+  id           String                @id @default(cuid())
+  clientCaseId String
+  sourceType   MemoryChunkSourceType
+  content      String
+  metadata     Json?
+  createdAt    DateTime              @default(now())
+
+  clientCase ClientCase @relation(fields: [clientCaseId], references: [id], onDelete: Cascade)
+
+  @@index([clientCaseId])
+  @@index([clientCaseId, sourceType])
 }
 
 model Session {
   id              String        @id @default(cuid())
   userId          String
   scenarioId      String
+  clientCaseId    String?
+  sessionNumber   Int           @default(1)
   type            SessionType   @default(PRACTICE)
   status          SessionStatus @default(ACTIVE)
   startedAt       DateTime      @default(now())
   endedAt         DateTime?
   practiceSeconds Int           @default(0)
   reviewSeconds   Int           @default(0)
+  episodicSummary String?
+  memorySnapshot  Json?
   user            User          @relation(fields: [userId], references: [id], onDelete: Cascade)
   scenario        Scenario      @relation(fields: [scenarioId], references: [id], onDelete: Cascade)
+  clientCase      ClientCase?   @relation(fields: [clientCaseId], references: [id], onDelete: SetNull)
   messages        Message[]
   review          SessionReview?
 
   @@index([userId])
   @@index([scenarioId])
+  @@index([clientCaseId])
 }
 
 model Message {
@@ -105,13 +188,13 @@ model Message {
 }
 
 model SessionReview {
-  id                         String  @id @default(cuid())
-  sessionId                  String  @unique
-  aiDebrief                  String?
-  objectiveScores            Json?
-  instructorNotes            String?
-  learnerConclusions         String?
-  learnerWhatILearned        String?
+  id                           String  @id @default(cuid())
+  sessionId                    String  @unique
+  aiDebrief                    String?
+  objectiveScores              Json?
+  instructorNotes              String?
+  learnerConclusions           String?
+  learnerWhatILearned          String?
   learnerInterventionRationale String?
-  session                    Session @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  session                      Session @relation(fields: [sessionId], references: [id], onDelete: Cascade)
 }

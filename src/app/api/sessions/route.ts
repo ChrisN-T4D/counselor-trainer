@@ -1,33 +1,12 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { auth } from "@/auth";
-import { createLlmProvider } from "@/lib/llm/factory";
 import { db } from "@/lib/db";
-import {
-  buildConversationMessages,
-  buildOpeningUserPrompt,
-} from "@/lib/sessions/prompts";
+import { findOrCreateClientCase, startCaseSession } from "@/lib/memory/client-case-service";
 
 const createSessionSchema = z.object({
   scenarioId: z.string().min(1),
 });
-
-const OPENING_TIMEOUT_MS = 30000;
-
-async function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
-  let timeoutId: NodeJS.Timeout | undefined;
-  const timeoutPromise = new Promise<never>((_, reject) => {
-    timeoutId = setTimeout(() => reject(new Error("LLM opening timed out")), timeoutMs);
-  });
-
-  try {
-    return await Promise.race([promise, timeoutPromise]);
-  } finally {
-    if (timeoutId) {
-      clearTimeout(timeoutId);
-    }
-  }
-}
 
 export async function POST(request: Request) {
   const session = await auth();
@@ -41,55 +20,23 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Invalid request" }, { status: 400 });
   }
 
-  const scenario = await db.scenario.findUnique({
-    where: { id: parsed.data.scenarioId },
-  });
-
-  if (!scenario) {
-    return NextResponse.json({ error: "Scenario not found" }, { status: 404 });
-  }
-
-  const llm = createLlmProvider();
-  const openingMessages = [
-    ...buildConversationMessages(scenario, []),
-    { role: "user" as const, content: buildOpeningUserPrompt() },
-  ];
-
-  let clientOpening: string;
   try {
-    clientOpening = await withTimeout(llm.complete(openingMessages), OPENING_TIMEOUT_MS);
+    const clientCase = await findOrCreateClientCase(session.user.id, parsed.data.scenarioId);
+    const practiceSession = await startCaseSession(session.user.id, clientCase.id);
+    return NextResponse.json(
+      { session: practiceSession, clientCaseId: clientCase.id },
+      { status: 201 },
+    );
   } catch (error) {
-    console.error("LLM opening error:", error);
+    console.error("Session start error:", error);
     return NextResponse.json(
       {
         error:
-          "Failed to generate client opening. Check OPENAI_BASE_URL and OPENAI_MODEL, or try again in a moment.",
+          "Failed to start session. Check OPENAI_BASE_URL and OPENAI_MODEL, or try again in a moment.",
       },
       { status: 504 },
     );
   }
-
-  const practiceSession = await db.session.create({
-    data: {
-      userId: session.user.id,
-      scenarioId: scenario.id,
-      messages: {
-        create: [
-          {
-            role: "CLIENT",
-            content: clientOpening,
-            sequence: 1,
-          },
-        ],
-      },
-    },
-    include: {
-      scenario: true,
-      messages: { orderBy: { sequence: "asc" } },
-    },
-  });
-
-  return NextResponse.json({ session: practiceSession }, { status: 201 });
 }
 
 export async function GET() {
@@ -102,6 +49,7 @@ export async function GET() {
     where: { userId: session.user.id },
     include: {
       scenario: { select: { title: true, dsmCategory: true } },
+      clientCase: { select: { id: true, displayName: true, sessionCount: true } },
       _count: { select: { messages: true } },
     },
     orderBy: { startedAt: "desc" },

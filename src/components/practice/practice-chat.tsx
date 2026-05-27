@@ -14,6 +14,8 @@ type Message = {
 type PracticeSession = {
   id: string;
   status: string;
+  sessionNumber?: number;
+  clientCaseId?: string | null;
   scenario: {
     title: string;
     contextLabel?: string;
@@ -123,6 +125,12 @@ export function PracticeChat({ sessionId }: { sessionId: string }) {
     <div className="flex flex-col gap-4">
       <div className="rounded-lg border border-slate-200 bg-white p-4">
         <h1 className="text-xl font-semibold text-slate-900">{practiceSession.scenario.title}</h1>
+        {practiceSession.sessionNumber && practiceSession.sessionNumber > 0 && (
+          <p className="mt-1 text-xs font-medium uppercase tracking-wide text-slate-500">
+            Session {practiceSession.sessionNumber}
+            {practiceSession.clientCaseId ? " · continuing case" : ""}
+          </p>
+        )}
         <p className="mt-1 text-sm text-slate-600">
           {practiceSession.scenario.contextLabel
             ? `${practiceSession.scenario.contextLabel} · `

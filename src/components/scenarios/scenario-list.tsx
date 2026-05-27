@@ -72,7 +72,7 @@ export function ScenarioList({ scenarios }: { scenarios: ScenarioListItem[] }) {
               disabled={loadingId === scenario.id}
               className="shrink-0 rounded-md bg-slate-900 px-4 py-2 text-sm text-white hover:bg-slate-800 disabled:opacity-50"
             >
-              {loadingId === scenario.id ? "Starting..." : "Start session"}
+              {loadingId === scenario.id ? "Starting..." : "Start / continue case"}
             </button>
           </div>
         </article>

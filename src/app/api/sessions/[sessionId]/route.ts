@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/auth";
 import { db } from "@/lib/db";
+import { finalizeSessionMemory } from "@/lib/memory/client-case-service";
 import { formatContextType } from "@/lib/scenarios/labels";
 import { sanitizeScenarioForActiveSession } from "@/lib/scenarios/public-scenario";
 
@@ -17,6 +18,7 @@ export async function GET(_request: Request, { params }: RouteParams) {
     where: { id: sessionId, userId: session.user.id },
     include: {
       scenario: true,
+      clientCase: { select: { id: true, sessionCount: true } },
       messages: { orderBy: { sequence: "asc" } },
     },
   });
@@ -72,6 +74,12 @@ export async function PATCH(request: Request, { params }: RouteParams) {
       practiceSeconds,
     },
   });
+
+  try {
+    await finalizeSessionMemory(sessionId, session.user.id);
+  } catch (error) {
+    console.error("Session memory consolidation error:", error);
+  }
 
   return NextResponse.json({ session: updated });
 }

@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { auth } from "@/auth";
 import { AppHeader } from "@/components/layout/app-header";
+import { MyCasesPanel } from "@/components/dashboard/my-cases-panel";
 import { db } from "@/lib/db";
 
 export const dynamic = "force-dynamic";
@@ -14,21 +15,49 @@ export default async function DashboardPage() {
   const session = await auth();
   const userId = session!.user!.id;
 
-  const [totals, recentSessions] = await Promise.all([
+  const [totals, recentSessions, clientCases] = await Promise.all([
     db.session.aggregate({
       where: { userId, status: "COMPLETED" },
       _sum: { practiceSeconds: true, reviewSeconds: true },
     }),
     db.session.findMany({
       where: { userId },
-      include: { scenario: { select: { title: true, dsmCategory: true } } },
+      include: {
+        scenario: { select: { title: true, dsmCategory: true } },
+        clientCase: { select: { id: true, displayName: true } },
+      },
       orderBy: { startedAt: "desc" },
       take: 5,
+    }),
+    db.clientCase.findMany({
+      where: { userId, status: "ACTIVE" },
+      include: {
+        scenario: {
+          select: { title: true, contextType: true, dsmCategory: true },
+        },
+        sessions: {
+          where: { status: "ACTIVE" },
+          select: { id: true },
+          take: 1,
+        },
+      },
+      orderBy: { updatedAt: "desc" },
+      take: 10,
     }),
   ]);
 
   const practiceSeconds = totals._sum.practiceSeconds ?? 0;
   const reviewSeconds = totals._sum.reviewSeconds ?? 0;
+
+  const myCases = clientCases.map((item) => ({
+    id: item.id,
+    displayName: item.displayName,
+    status: item.status,
+    sessionCount: item.sessionCount,
+    lastSessionAt: item.lastSessionAt?.toISOString() ?? null,
+    activeSessionId: item.sessions[0]?.id ?? null,
+    scenario: item.scenario,
+  }));
 
   return (
     <>
@@ -53,13 +82,20 @@ export default async function DashboardPage() {
         </div>
 
         <div className="mt-8 flex items-center justify-between">
-          <h2 className="text-lg font-semibold text-slate-900">Recent sessions</h2>
+          <h2 className="text-lg font-semibold text-slate-900">My cases</h2>
           <Link
             href="/scenarios"
             className="rounded-md bg-slate-900 px-4 py-2 text-sm text-white hover:bg-slate-800"
           >
-            Start practice
+            New scenario
           </Link>
+        </div>
+        <div className="mt-4">
+          <MyCasesPanel initialCases={myCases} />
+        </div>
+
+        <div className="mt-8">
+          <h2 className="text-lg font-semibold text-slate-900">Recent sessions</h2>
         </div>
 
         <div className="mt-4 space-y-3">
@@ -81,7 +117,10 @@ export default async function DashboardPage() {
                 <div className="flex items-center justify-between gap-4">
                   <div>
                     <p className="font-medium text-slate-900">{item.scenario.title}</p>
-                    <p className="text-sm text-slate-600">{item.scenario.dsmCategory}</p>
+                    <p className="text-sm text-slate-600">
+                      {item.scenario.dsmCategory}
+                      {item.sessionNumber > 1 ? ` · Session ${item.sessionNumber}` : ""}
+                    </p>
                   </div>
                   <span className="text-xs uppercase tracking-wide text-slate-500">
                     {item.status === "COMPLETED" ? "Review" : item.status}

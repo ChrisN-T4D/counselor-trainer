@@ -4,7 +4,6 @@ import { auth } from "@/auth";
 import { db } from "@/lib/db";
 import { isBiopsychosocialWriteup } from "@/lib/scenarios/case-writeup";
 import { formatContextType } from "@/lib/scenarios/labels";
-import { sanitizeScenarioForActiveSession } from "@/lib/scenarios/public-scenario";
 
 type RouteParams = { params: Promise<{ sessionId: string }> };
 
@@ -25,6 +24,7 @@ export async function GET(_request: Request, { params }: RouteParams) {
     where: { id: sessionId, userId: session.user.id },
     include: {
       scenario: true,
+      clientCase: true,
       messages: { orderBy: { sequence: "asc" } },
       review: true,
     },
@@ -45,13 +45,45 @@ export async function GET(_request: Request, { params }: RouteParams) {
     ? practiceSession.scenario.caseWriteup
     : null;
 
+  let stateSnapshots: {
+    id: string;
+    sessionNumber: number | null;
+    source: string;
+    relationship: unknown;
+    safety: unknown;
+    delta: unknown;
+    rationale: string | null;
+    capturedAt: Date;
+  }[] = [];
+
+  if (practiceSession.clientCaseId) {
+    stateSnapshots = await db.caseStateSnapshot.findMany({
+      where: { clientCaseId: practiceSession.clientCaseId },
+      orderBy: { capturedAt: "asc" },
+      select: {
+        id: true,
+        sessionNumber: true,
+        source: true,
+        relationship: true,
+        safety: true,
+        delta: true,
+        rationale: true,
+        capturedAt: true,
+      },
+    });
+  }
+
   return NextResponse.json({
     session: {
       id: practiceSession.id,
       status: practiceSession.status,
+      sessionNumber: practiceSession.sessionNumber,
       startedAt: practiceSession.startedAt,
       endedAt: practiceSession.endedAt,
       practiceSeconds: practiceSession.practiceSeconds,
+      episodicSummary: practiceSession.episodicSummary,
+      memorySnapshot: practiceSession.memorySnapshot,
+      clientCaseId: practiceSession.clientCaseId,
       messages: practiceSession.messages,
       scenario: {
         id: practiceSession.scenario.id,
@@ -64,6 +96,7 @@ export async function GET(_request: Request, { params }: RouteParams) {
       },
       caseWriteup,
       review: practiceSession.review,
+      stateSnapshots,
     },
   });
 }
