@@ -30,6 +30,15 @@ enum MessageRole {
   SYSTEM
 }
 
+enum ScenarioContextType {
+  MEDICAL_FAMILY_THERAPY
+  DOCTOR_HANDOFF
+  PEDIATRIC_PARENT_CHILD
+  INDIVIDUAL
+  COUPLES
+  FAMILY
+}
+
 model User {
   id            String    @id @default(cuid())
   email         String    @unique
@@ -44,12 +53,23 @@ model User {
 model Scenario {
   id                String    @id @default(cuid())
   title             String    @unique
+  contextType       ScenarioContextType @default(INDIVIDUAL)
   dsmCategory       String
   presentingProblem String
   systemPrompt      String
+  caseWriteup       Json?
   objectives        String[]
   difficulty        String
+  ageGroup          String    @default("adult")
+  acuityLevel       String    @default("moderate")
+  referralSource    String?
+  sessionParticipants String[]
+  generationSettings Json?
+  isTemplate        Boolean   @default(false)
   sessions          Session[]
+
+  @@index([contextType])
+  @@index([difficulty])
 }
 
 model Session {
@@ -85,10 +105,13 @@ model Message {
 }
 
 model SessionReview {
-  id              String  @id @default(cuid())
-  sessionId       String  @unique
-  aiDebrief       String?
-  objectiveScores Json?
-  instructorNotes String?
-  session         Session @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  id                         String  @id @default(cuid())
+  sessionId                  String  @unique
+  aiDebrief                  String?
+  objectiveScores            Json?
+  instructorNotes            String?
+  learnerConclusions         String?
+  learnerWhatILearned        String?
+  learnerInterventionRationale String?
+  session                    Session @relation(fields: [sessionId], references: [id], onDelete: Cascade)
 }

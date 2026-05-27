@@ -2,15 +2,29 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import "dotenv/config";
 import { PrismaPg } from "@prisma/adapter-pg";
-import { PrismaClient } from "../src/generated/prisma/client";
+import { Prisma, PrismaClient } from "../src/generated/prisma/client";
 
 type ScenarioSeed = {
   title: string;
+  contextType:
+    | "MEDICAL_FAMILY_THERAPY"
+    | "DOCTOR_HANDOFF"
+    | "PEDIATRIC_PARENT_CHILD"
+    | "INDIVIDUAL"
+    | "COUPLES"
+    | "FAMILY";
   dsmCategory: string;
   presentingProblem: string;
   systemPrompt: string;
   objectives: string[];
   difficulty: string;
+  ageGroup: string;
+  acuityLevel: string;
+  referralSource?: string;
+  sessionParticipants: string[];
+  generationSettings?: Prisma.InputJsonValue;
+  caseWriteup?: Prisma.InputJsonValue;
+  isTemplate?: boolean;
 };
 
 const connectionString = process.env.DATABASE_URL;
@@ -29,13 +43,24 @@ async function main() {
     await db.scenario.upsert({
       where: { title: scenario.title },
       update: {
+        contextType: scenario.contextType,
         dsmCategory: scenario.dsmCategory,
         presentingProblem: scenario.presentingProblem,
         systemPrompt: scenario.systemPrompt,
         objectives: scenario.objectives,
         difficulty: scenario.difficulty,
+        ageGroup: scenario.ageGroup,
+        acuityLevel: scenario.acuityLevel,
+        referralSource: scenario.referralSource,
+        sessionParticipants: scenario.sessionParticipants,
+        generationSettings: scenario.generationSettings,
+        caseWriteup: scenario.caseWriteup,
+        isTemplate: scenario.isTemplate ?? true,
       },
-      create: scenario,
+      create: {
+        ...scenario,
+        isTemplate: scenario.isTemplate ?? true,
+      },
     });
   }
 

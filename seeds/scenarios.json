@@ -1,38 +1,206 @@
 [
   {
-    "title": "Persistent Low Mood",
+    "title": "Postpartum Strain in Medical Family Referral",
+    "contextType": "MEDICAL_FAMILY_THERAPY",
+    "dsmCategory": "Perinatal mood and anxiety symptoms (rule out major depressive episode)",
+    "presentingProblem": "A 31-year-old parent was referred by OB-GYN for persistent tearfulness, sleep disruption, and withdrawal from family support eight weeks postpartum.",
+    "systemPrompt": "You are Marisa, age 31. You feel guilty for not enjoying new parenthood and fear being judged as a bad parent. You downplay distress initially but acknowledge feeling numb, overwhelmed, and isolated when rapport is established.",
+    "objectives": [
+      "Build rapport while normalizing postpartum emotional complexity",
+      "Assess mood, sleep, functioning, and safety in a non-leading way",
+      "Explore family supports and barriers to care follow-through"
+    ],
+    "difficulty": "intermediate",
+    "ageGroup": "adult",
+    "acuityLevel": "moderate",
+    "referralSource": "doctor",
+    "sessionParticipants": ["client", "partner"],
+    "generationSettings": {
+      "symptomSeverity": 3,
+      "clientResistance": 2,
+      "sessionUrgency": 3
+    },
+    "caseWriteup": {
+      "identifyingSnapshot": "31-year-old postpartum parent referred by OB-GYN after elevated mood screen; attended with partner available by phone.",
+      "presentingConcerns": "Tearfulness, guilt, fatigue, emotional numbing, reduced appetite, and social withdrawal since delivery.",
+      "biologicalFactors": "Interrupted sleep due to infant care, recent hormonal shifts, limited restorative rest, no current substance use.",
+      "psychologicalFactors": "Self-critical beliefs, fear of judgment, reduced pleasure, anxious rumination about parenting adequacy.",
+      "socialSystemicFactors": "Partner works long shifts, family support inconsistent, financial stress related to leave reduction.",
+      "riskSafety": "Denies active SI/HI; passive hopeless thoughts noted; infant safety routines intact; protective factors include partner and desire to improve.",
+      "workingHypotheses": "Perinatal mood/anxiety symptoms compounded by sleep deprivation and role transition stress.",
+      "sessionGoals": "Increase disclosure safety, complete brief risk check, and identify one immediate support and one follow-up care step.",
+      "interventionConsiderations": "Use validation, paced psychoeducation, and collaborative safety/support planning."
+    },
+    "isTemplate": true
+  },
+  {
+    "title": "Warm Handoff During Primary Care Visit",
+    "contextType": "DOCTOR_HANDOFF",
+    "dsmCategory": "Generalized anxiety symptoms with panic spikes",
+    "presentingProblem": "A 42-year-old patient in a primary care visit agrees to brief in-room behavioral health consult after reporting chest tightness and escalating worry.",
+    "systemPrompt": "You are Theo, age 42. You are skeptical that talking helps but are willing to try because your doctor recommended it. You are polite, guarded, and focused on physical sensations that feel dangerous.",
+    "objectives": [
+      "Establish quick rapport in a time-limited handoff",
+      "Differentiate panic physiology from immediate medical emergency after physician clearance",
+      "Co-create one practical coping step before visit ends"
+    ],
+    "difficulty": "beginner",
+    "ageGroup": "adult",
+    "acuityLevel": "moderate",
+    "referralSource": "doctor",
+    "sessionParticipants": ["client", "physician"],
+    "generationSettings": {
+      "symptomSeverity": 3,
+      "clientResistance": 3,
+      "sessionUrgency": 4
+    },
+    "caseWriteup": {
+      "identifyingSnapshot": "42-year-old primary care patient seen for somatic anxiety complaints; warm handoff requested by physician.",
+      "presentingConcerns": "Acute chest tightness episodes, catastrophic worry, sleep disruption, and fear of 'something being missed'.",
+      "biologicalFactors": "Recent caffeine overuse, chronic poor sleep, benign medical workup pending final lab confirmation.",
+      "psychologicalFactors": "Health anxiety, hypervigilance to bodily sensations, low confidence in coping skills.",
+      "socialSystemicFactors": "High workload, caregiving pressure, limited time for self-care, reluctant to involve family.",
+      "riskSafety": "No SI/HI; panic symptoms severe but no immediate safety threat after medical triage.",
+      "workingHypotheses": "Panic cycle maintained by catastrophic interpretation and avoidance of internal cues.",
+      "sessionGoals": "Provide stabilization, normalize stress response, and secure buy-in for brief follow-up.",
+      "interventionConsiderations": "Use rapid grounding, paced breathing, and focused psychoeducation."
+    },
+    "isTemplate": true
+  },
+  {
+    "title": "Pediatric School Refusal with Parent Present",
+    "contextType": "PEDIATRIC_PARENT_CHILD",
+    "dsmCategory": "Separation anxiety and school avoidance features",
+    "presentingProblem": "An 11-year-old has increasing school refusal, stomachaches before class, and conflict with caregiver around attendance.",
+    "systemPrompt": "You are Eli, age 11. You look to your parent before answering and become quiet when adults talk over you. You deny 'being scared' but describe stomach pain and feeling unsafe at school.",
+    "objectives": [
+      "Engage both child and caregiver without triangulation",
+      "Assess anxiety patterns and functional impact on school attendance",
+      "Build one child-centered and one caregiver-supported action step"
+    ],
+    "difficulty": "intermediate",
+    "ageGroup": "child",
+    "acuityLevel": "moderate",
+    "referralSource": "school",
+    "sessionParticipants": ["child", "parent"],
+    "generationSettings": {
+      "symptomSeverity": 3,
+      "clientResistance": 2,
+      "sessionUrgency": 3
+    },
+    "caseWriteup": {
+      "identifyingSnapshot": "11-year-old referred after repeated absences; attends intake with caregiver.",
+      "presentingConcerns": "School refusal, somatic complaints before school, escalating morning conflict, peer tension reports.",
+      "biologicalFactors": "Intermittent stomach pain with no major medical findings; sleep schedule irregular.",
+      "psychologicalFactors": "Anxiety cues around separation and peer judgment; limited emotional vocabulary; strengths in creativity.",
+      "socialSystemicFactors": "Single caregiver household, transportation stress, teacher communication inconsistent.",
+      "riskSafety": "No SI/HI; emotional dysregulation risk during school transitions.",
+      "workingHypotheses": "Anxiety-driven avoidance reinforced by short-term relief and family stress patterns.",
+      "sessionGoals": "Validate child experience, align caregiver response, and begin graded re-entry planning.",
+      "interventionConsiderations": "Use developmentally appropriate language, caregiver coaching, and collaborative exposure planning."
+    },
+    "isTemplate": true
+  },
+  {
+    "title": "Persistent Low Mood in Individual Counseling",
+    "contextType": "INDIVIDUAL",
     "dsmCategory": "Major Depressive Disorder, single episode, moderate",
-    "presentingProblem": "A 28-year-old reports two months of low mood, fatigue, poor concentration, and loss of interest in hobbies. They deny current suicidal intent but mention feeling hopeless at times.",
-    "systemPrompt": "You are Alex, age 28, employed but struggling to keep up at work. You speak quietly and need encouragement to share details. You minimize symptoms at first but open up when the counselor is warm and nonjudgmental. You are not currently planning suicide but feel life has lost color.",
+    "presentingProblem": "A 28-year-old reports two months of low mood, fatigue, poor concentration, and loss of interest in hobbies.",
+    "systemPrompt": "You are Alex, age 28, employed but struggling to keep up at work. You speak quietly and need encouragement to share details. You minimize symptoms at first but open up when the counselor is warm and nonjudgmental.",
     "objectives": [
       "Build rapport and assess mood symptoms",
       "Screen for safety without leading the client",
-      "Use reflective listening"
+      "Use reflective listening to deepen emotional content"
     ],
-    "difficulty": "beginner"
+    "difficulty": "beginner",
+    "ageGroup": "adult",
+    "acuityLevel": "moderate",
+    "referralSource": "self",
+    "sessionParticipants": ["client"],
+    "generationSettings": {
+      "symptomSeverity": 3,
+      "clientResistance": 2,
+      "sessionUrgency": 2
+    },
+    "caseWriteup": {
+      "identifyingSnapshot": "28-year-old employed adult self-referred for worsening mood and motivation loss.",
+      "presentingConcerns": "Low mood, fatigue, reduced concentration, social withdrawal, diminished enjoyment.",
+      "biologicalFactors": "Poor sleep quality and reduced appetite over two months.",
+      "psychologicalFactors": "Hopeless cognitions, shame about productivity decline, difficulty asking for support.",
+      "socialSystemicFactors": "Work performance concerns and reduced engagement with friend network.",
+      "riskSafety": "Denies active plan/intent; passive hopelessness present; protective factors include future goals and sister support.",
+      "workingHypotheses": "Depressive episode with cognitive and behavioral withdrawal maintaining symptoms.",
+      "sessionGoals": "Establish alliance, complete risk check, and identify one behavioral activation target.",
+      "interventionConsiderations": "Use empathic reflection and collaborative agenda setting."
+    },
+    "isTemplate": true
   },
   {
-    "title": "Worry and Restlessness",
-    "dsmCategory": "Generalized Anxiety Disorder",
-    "presentingProblem": "A 34-year-old reports constant worry about work, health, and family for over six months, with muscle tension and sleep difficulty.",
-    "systemPrompt": "You are Jordan, age 34, a parent who feels responsible for everyone. You jump between worries, speak quickly when anxious, and ask whether the counselor thinks you are overreacting. You want relief but fear being a burden.",
+    "title": "Escalating Conflict in Couple Session",
+    "contextType": "COUPLES",
+    "dsmCategory": "Relationship distress with communication breakdown",
+    "presentingProblem": "A couple reports frequent arguments about trust, finances, and emotional withdrawal after a recent relocation.",
+    "systemPrompt": "You are Sam in a couple session. You feel unheard and become defensive quickly when your partner brings up trust. You want the relationship to work but fear being blamed.",
     "objectives": [
-      "Explore worry themes and duration",
-      "Validate experience without reinforcing catastrophic thinking",
-      "Collaborate on one manageable next step"
+      "Set structure and emotional safety for both partners",
+      "Identify interaction cycle rather than assigning blame",
+      "Facilitate one concrete communication shift"
     ],
-    "difficulty": "beginner"
+    "difficulty": "intermediate",
+    "ageGroup": "adult",
+    "acuityLevel": "moderate",
+    "referralSource": "self",
+    "sessionParticipants": ["partner_a", "partner_b"],
+    "generationSettings": {
+      "symptomSeverity": 2,
+      "clientResistance": 3,
+      "sessionUrgency": 3
+    },
+    "caseWriteup": {
+      "identifyingSnapshot": "Co-habiting couple in their early 30s seeking therapy after repeated unresolved conflict.",
+      "presentingConcerns": "Arguments escalate rapidly, both report feeling unseen, trust concerns after prior secrecy.",
+      "biologicalFactors": "Both report sleep disruption after fights and elevated stress somatics.",
+      "psychologicalFactors": "Mutual defensiveness, rejection sensitivity, and cognitive filtering toward threat.",
+      "socialSystemicFactors": "Recent move, reduced support network, financial pressure from increased housing costs.",
+      "riskSafety": "No physical violence disclosed; high emotional reactivity raises verbal escalation risk.",
+      "workingHypotheses": "Pursue-withdraw cycle with attachment insecurity and stress overload.",
+      "sessionGoals": "De-escalate cycle, increase reflective listening, and draft conflict pause agreement.",
+      "interventionConsiderations": "Use cycle mapping, validation of each partner, and structured turn-taking."
+    },
+    "isTemplate": true
   },
   {
-    "title": "Trauma Triggers",
-    "dsmCategory": "Posttraumatic Stress Disorder",
-    "presentingProblem": "A 41-year-old veteran reports nightmares, hypervigilance, and avoidance of crowded places since a deployment-related event three years ago.",
-    "systemPrompt": "You are Morgan, age 41, guarded at first and uncomfortable discussing the trauma directly. You describe sleep problems and irritability more easily than the event itself. You become more engaged when the counselor respects pacing and control.",
+    "title": "Multigenerational Family Boundary Strain",
+    "contextType": "FAMILY",
+    "dsmCategory": "Family relational stress with adolescent behavior concerns",
+    "presentingProblem": "A family seeks support after repeated conflicts about curfew, school performance, and household roles involving a teen and caregivers.",
+    "systemPrompt": "You are a 15-year-old in family therapy, feeling misunderstood and controlled. You become sarcastic when adults interrupt and disclose more when asked directly and respectfully.",
     "objectives": [
-      "Assess trauma-related symptoms sensitively",
-      "Maintain safety and pacing",
-      "Support grounding before detailed trauma processing"
+      "Balance voices across family members",
+      "Map boundary and role conflicts across generations",
+      "Create a shared, specific behavior agreement"
     ],
-    "difficulty": "intermediate"
+    "difficulty": "intermediate",
+    "ageGroup": "adolescent",
+    "acuityLevel": "moderate",
+    "referralSource": "family",
+    "sessionParticipants": ["adolescent", "caregiver_1", "caregiver_2"],
+    "generationSettings": {
+      "symptomSeverity": 2,
+      "clientResistance": 3,
+      "sessionUrgency": 2
+    },
+    "caseWriteup": {
+      "identifyingSnapshot": "Family of four with adolescent attendance/behavior conflict; referred after school counselor recommendation.",
+      "presentingConcerns": "Frequent evening conflict, inconsistent discipline, and school attendance decline.",
+      "biologicalFactors": "Teen reports irregular sleep and daytime fatigue affecting concentration.",
+      "psychologicalFactors": "Adolescent frustration and shame; caregivers report burnout and fear of losing control.",
+      "socialSystemicFactors": "Shift-work schedules, differing parenting styles, and limited extended-family support.",
+      "riskSafety": "No acute safety concerns reported; conflict intensity occasionally includes door-slamming and verbal hostility.",
+      "workingHypotheses": "Inconsistent boundaries and communication ruptures maintain coercive interaction cycle.",
+      "sessionGoals": "Improve family communication process and agree on one enforceable routine plan.",
+      "interventionConsiderations": "Use structural family lens, enactments, and collaborative rule setting."
+    },
+    "isTemplate": true
   }
 ]

@@ -35,5 +35,8 @@ export function buildConversationMessages(
 }
 
 export function buildOpeningUserPrompt(): string {
-  return "Begin the session. Introduce yourself as the client would at the start of a first or early counseling session. Share what brought you in today.";
+  return `Begin the session as the client in a first or early counseling encounter.
+Open naturally and gradually: include a brief greeting, a little context, and what brought you in today.
+Use a realistic emotional tone (hesitation, uncertainty, or guardedness when appropriate).
+Do not dump all case details at once. Reveal information over time as the counselor asks good questions.`;
 }

@@ -12,6 +12,23 @@ const createSessionSchema = z.object({
   scenarioId: z.string().min(1),
 });
 
+const OPENING_TIMEOUT_MS = 30000;
+
+async function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
+  let timeoutId: NodeJS.Timeout | undefined;
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    timeoutId = setTimeout(() => reject(new Error("LLM opening timed out")), timeoutMs);
+  });
+
+  try {
+    return await Promise.race([promise, timeoutPromise]);
+  } finally {
+    if (timeoutId) {
+      clearTimeout(timeoutId);
+    }
+  }
+}
+
 export async function POST(request: Request) {
   const session = await auth();
   if (!session?.user?.id) {
@@ -40,12 +57,15 @@ export async function POST(request: Request) {
 
   let clientOpening: string;
   try {
-    clientOpening = await llm.complete(openingMessages);
+    clientOpening = await withTimeout(llm.complete(openingMessages), OPENING_TIMEOUT_MS);
   } catch (error) {
     console.error("LLM opening error:", error);
     return NextResponse.json(
-      { error: "Failed to generate client opening. Check OPENAI_BASE_URL and OPENAI_MODEL." },
-      { status: 502 },
+      {
+        error:
+          "Failed to generate client opening. Check OPENAI_BASE_URL and OPENAI_MODEL, or try again in a moment.",
+      },
+      { status: 504 },
     );
   }
 

@@ -16,6 +16,7 @@ type PracticeSession = {
   status: string;
   scenario: {
     title: string;
+    contextLabel?: string;
     dsmCategory: string;
     presentingProblem: string;
   };
@@ -106,7 +107,7 @@ export function PracticeChat({ sessionId }: { sessionId: string }) {
       return;
     }
 
-    router.push("/dashboard");
+    router.push(`/review/${sessionId}`);
     router.refresh();
   }
 
@@ -122,8 +123,16 @@ export function PracticeChat({ sessionId }: { sessionId: string }) {
     <div className="flex flex-col gap-4">
       <div className="rounded-lg border border-slate-200 bg-white p-4">
         <h1 className="text-xl font-semibold text-slate-900">{practiceSession.scenario.title}</h1>
-        <p className="mt-1 text-sm text-slate-600">{practiceSession.scenario.dsmCategory}</p>
+        <p className="mt-1 text-sm text-slate-600">
+          {practiceSession.scenario.contextLabel
+            ? `${practiceSession.scenario.contextLabel} · `
+            : ""}
+          {practiceSession.scenario.dsmCategory}
+        </p>
         <p className="mt-2 text-sm text-slate-700">{practiceSession.scenario.presentingProblem}</p>
+        <p className="mt-2 text-xs text-slate-500">
+          Full case write-up is hidden during practice and revealed after session completion.
+        </p>
       </div>
 
       <div className="min-h-[420px] rounded-lg border border-slate-200 bg-slate-50 p-4">
@@ -179,7 +188,15 @@ export function PracticeChat({ sessionId }: { sessionId: string }) {
           </div>
         </form>
       ) : (
-        <p className="text-sm text-slate-600">This session has ended.</p>
+        <div className="space-y-2">
+          <p className="text-sm text-slate-600">This session has ended.</p>
+          <a
+            href={`/review/${sessionId}`}
+            className="inline-block text-sm font-medium text-slate-900 underline"
+          >
+            Open session review and revealed case write-up
+          </a>
+        </div>
       )}
 
       {error && <p className="text-sm text-red-600">{error}</p>}

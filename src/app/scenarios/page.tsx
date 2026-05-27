@@ -1,13 +1,11 @@
 import { AppHeader } from "@/components/layout/app-header";
-import { ScenarioList } from "@/components/scenarios/scenario-list";
-import { db } from "@/lib/db";
+import { ScenariosPageClient } from "@/components/scenarios/scenarios-page-client";
+import { getPublicScenarios } from "@/lib/scenarios/public-scenario";
 
 export const dynamic = "force-dynamic";
 
 export default async function ScenariosPage() {
-  const scenarios = await db.scenario.findMany({
-    orderBy: { title: "asc" },
-  });
+  const scenarios = await getPublicScenarios();
 
   return (
     <>
@@ -16,10 +14,11 @@ export default async function ScenariosPage() {
         <div className="mb-8">
           <h1 className="text-2xl font-semibold text-slate-900">Training scenarios</h1>
           <p className="mt-1 text-slate-600">
-            Choose a DSM-style case to begin a text-based practice session.
+            Choose a counseling context and generate custom practice cases. Full
+            biopsychosocial write-ups are revealed only after session completion.
           </p>
         </div>
-        <ScenarioList scenarios={scenarios} />
+        <ScenariosPageClient initialScenarios={scenarios} />
       </main>
     </>
   );

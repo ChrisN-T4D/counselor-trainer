@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/auth";
 import { db } from "@/lib/db";
+import { formatContextType } from "@/lib/scenarios/labels";
+import { sanitizeScenarioForActiveSession } from "@/lib/scenarios/public-scenario";
 
 type RouteParams = { params: Promise<{ sessionId: string }> };
 
@@ -23,7 +25,22 @@ export async function GET(_request: Request, { params }: RouteParams) {
     return NextResponse.json({ error: "Session not found" }, { status: 404 });
   }
 
-  return NextResponse.json({ session: practiceSession });
+  const revealWriteup = practiceSession.status === "COMPLETED";
+
+  return NextResponse.json({
+    session: {
+      ...practiceSession,
+      scenario: revealWriteup
+        ? {
+            ...practiceSession.scenario,
+            contextLabel: formatContextType(practiceSession.scenario.contextType),
+          }
+        : {
+            ...sanitizeScenarioForActiveSession(practiceSession.scenario),
+            contextLabel: formatContextType(practiceSession.scenario.contextType),
+          },
+    },
+  });
 }
 
 export async function PATCH(request: Request, { params }: RouteParams) {

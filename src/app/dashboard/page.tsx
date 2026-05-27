@@ -71,7 +71,11 @@ export default async function DashboardPage() {
             recentSessions.map((item) => (
               <Link
                 key={item.id}
-                href={`/practice/${item.id}`}
+                href={
+                  item.status === "COMPLETED"
+                    ? `/review/${item.id}`
+                    : `/practice/${item.id}`
+                }
                 className="block rounded-lg border border-slate-200 bg-white p-4 hover:border-slate-300"
               >
                 <div className="flex items-center justify-between gap-4">
@@ -80,7 +84,7 @@ export default async function DashboardPage() {
                     <p className="text-sm text-slate-600">{item.scenario.dsmCategory}</p>
                   </div>
                   <span className="text-xs uppercase tracking-wide text-slate-500">
-                    {item.status}
+                    {item.status === "COMPLETED" ? "Review" : item.status}
                   </span>
                 </div>
               </Link>
