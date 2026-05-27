@@ -1,0 +1,94 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum Role {
+  STUDENT
+  INSTRUCTOR
+  ADMIN
+}
+
+enum SessionType {
+  PRACTICE
+  REVIEW
+}
+
+enum SessionStatus {
+  ACTIVE
+  COMPLETED
+  ABANDONED
+}
+
+enum MessageRole {
+  CLIENT
+  THERAPIST
+  SYSTEM
+}
+
+model User {
+  id            String    @id @default(cuid())
+  email         String    @unique
+  name          String
+  passwordHash  String
+  entraObjectId String?   @unique
+  role          Role      @default(STUDENT)
+  createdAt     DateTime  @default(now())
+  sessions      Session[]
+}
+
+model Scenario {
+  id                String    @id @default(cuid())
+  title             String    @unique
+  dsmCategory       String
+  presentingProblem String
+  systemPrompt      String
+  objectives        String[]
+  difficulty        String
+  sessions          Session[]
+}
+
+model Session {
+  id              String        @id @default(cuid())
+  userId          String
+  scenarioId      String
+  type            SessionType   @default(PRACTICE)
+  status          SessionStatus @default(ACTIVE)
+  startedAt       DateTime      @default(now())
+  endedAt         DateTime?
+  practiceSeconds Int           @default(0)
+  reviewSeconds   Int           @default(0)
+  user            User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  scenario        Scenario      @relation(fields: [scenarioId], references: [id], onDelete: Cascade)
+  messages        Message[]
+  review          SessionReview?
+
+  @@index([userId])
+  @@index([scenarioId])
+}
+
+model Message {
+  id            String      @id @default(cuid())
+  sessionId     String
+  role          MessageRole
+  content       String
+  audioBlobPath String?
+  sequence      Int
+  createdAt     DateTime    @default(now())
+  session       Session     @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@index([sessionId])
+}
+
+model SessionReview {
+  id              String  @id @default(cuid())
+  sessionId       String  @unique
+  aiDebrief       String?
+  objectiveScores Json?
+  instructorNotes String?
+  session         Session @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+}
