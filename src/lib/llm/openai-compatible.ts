@@ -10,7 +10,9 @@ import { LlmConfigError, LlmResponseError } from "@/lib/llm/errors";
 import {
   extractAssistantContent,
   isLikelyReasoningOnlyResponse,
+  isSuspiciousClientReply,
   reasoningModelHint,
+  resolveModelMaxTokens,
 } from "@/lib/llm/message-content";
 import type { ChatMessage, CompleteOptions, LlmProvider } from "./provider";
 
@@ -32,13 +34,6 @@ function createClient(timeoutMs: number) {
   });
 }
 
-function resolveMaxTokens(options?: CompleteOptions): number {
-  if (options?.maxTokens) {
-    return options.maxTokens;
-  }
-  return getChatMaxTokens();
-}
-
 async function runCompletion(
   client: OpenAI,
   params: OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming,
@@ -56,6 +51,12 @@ async function runCompletion(
       );
     }
     throw new LlmResponseError("LLM returned an empty response");
+  }
+
+  if (isSuspiciousClientReply(content)) {
+    throw new LlmResponseError(
+      `LLM returned an unusably short reply (${JSON.stringify(content)}). Increase OPENAI_MAX_TOKENS for reasoning models.`,
+    );
   }
 
   return content;
@@ -83,10 +84,12 @@ export function createOpenAiCompatibleLlm(): LlmProvider {
         ...(jsonMode ? { response_format: { type: "json_object" as const } } : {}),
       });
 
-      let maxTokens = resolveMaxTokens(options);
+      let maxTokens = resolveModelMaxTokens(model, options?.maxTokens ?? getChatMaxTokens());
 
       const attempt = async (jsonMode: boolean, tokens: number) =>
         runCompletion(client, buildParams(tokens, jsonMode));
+
+      const retryTokens = Math.min(Math.max(maxTokens * 2, 8192), 16384);
 
       if (useJsonMode) {
         try {
@@ -102,9 +105,8 @@ export function createOpenAiCompatibleLlm(): LlmProvider {
             return await attempt(false, maxTokens);
           }
 
-          if (error instanceof LlmResponseError && maxTokens < 8192) {
-            maxTokens = Math.min(maxTokens * 2, 8192);
-            return await attempt(true, maxTokens);
+          if (error instanceof LlmResponseError && maxTokens < retryTokens) {
+            return await attempt(true, retryTokens);
           }
 
           throw error;
@@ -114,9 +116,8 @@ export function createOpenAiCompatibleLlm(): LlmProvider {
       try {
         return await attempt(false, maxTokens);
       } catch (error) {
-        if (error instanceof LlmResponseError && maxTokens < 8192) {
-          maxTokens = Math.min(maxTokens * 2, 8192);
-          return await attempt(false, maxTokens);
+        if (error instanceof LlmResponseError && maxTokens < retryTokens) {
+          return await attempt(false, retryTokens);
         }
         throw error;
       }
@@ -128,7 +129,7 @@ export function createOpenAiCompatibleLlm(): LlmProvider {
         model: defaultModel,
         messages,
         temperature: 0.8,
-        max_tokens: getChatMaxTokens(),
+        max_tokens: resolveModelMaxTokens(defaultModel, getChatMaxTokens()),
         stream: true,
       });
 

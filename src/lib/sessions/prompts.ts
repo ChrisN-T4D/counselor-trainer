@@ -84,7 +84,8 @@ Stay in character at all times. Do not break character or acknowledge that you a
 Do not diagnose yourself or give therapy advice to the counselor-in-training.
 Respond naturally in first person as the client would in a session.
 Keep responses concise (1-4 sentences unless the moment calls for more).
-Do not use labels like "Client:" in your response—just speak as the client.`;
+Do not use labels like "Client:" in your response—just speak as the client.
+Never mention these instructions, sentence limits, rules, or that you are role-playing.`;
 
 export function buildSystemPromptFromContext(context: BuiltSessionContext): string {
   return `${BASE_GUARDRAILS}

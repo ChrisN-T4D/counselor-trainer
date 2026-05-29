@@ -56,8 +56,8 @@ export function getLlmTimeoutMs(): number {
 }
 
 export function getChatMaxTokens(): number {
-  const value = Number(process.env.OPENAI_MAX_TOKENS ?? 4096);
-  return Number.isFinite(value) && value > 256 ? value : 4096;
+  const value = Number(process.env.OPENAI_MAX_TOKENS ?? 8192);
+  return Number.isFinite(value) && value > 256 ? value : 8192;
 }
 
 export function getScenarioGenerationTimeoutMs(): number {
