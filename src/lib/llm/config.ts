@@ -51,8 +51,13 @@ export function normalizeOpenAiBaseUrl(baseUrl: string): string {
 }
 
 export function getLlmTimeoutMs(): number {
-  const value = Number(process.env.OPENAI_TIMEOUT_MS ?? 120_000);
-  return Number.isFinite(value) && value > 0 ? value : 120_000;
+  const value = Number(process.env.OPENAI_TIMEOUT_MS ?? 180_000);
+  return Number.isFinite(value) && value > 0 ? value : 180_000;
+}
+
+export function getChatMaxTokens(): number {
+  const value = Number(process.env.OPENAI_MAX_TOKENS ?? 4096);
+  return Number.isFinite(value) && value > 256 ? value : 4096;
 }
 
 export function getScenarioGenerationTimeoutMs(): number {
@@ -61,8 +66,8 @@ export function getScenarioGenerationTimeoutMs(): number {
 }
 
 export function getScenarioMaxTokens(): number {
-  const value = Number(process.env.SCENARIO_MAX_TOKENS ?? 2800);
-  return Number.isFinite(value) && value > 500 ? value : 2800;
+  const value = Number(process.env.SCENARIO_MAX_TOKENS ?? 4096);
+  return Number.isFinite(value) && value > 500 ? value : 4096;
 }
 
 /** Optional faster/smaller model for one-shot scenario JSON (falls back to OPENAI_MODEL). */

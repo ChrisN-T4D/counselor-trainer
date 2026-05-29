@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { auth } from "@/auth";
 import { createLlmProvider } from "@/lib/llm/factory";
+import { classifyLlmError } from "@/lib/llm/errors";
 import { db } from "@/lib/db";
 import {
   parseStoredRelationshipState,
@@ -129,10 +130,8 @@ export async function POST(request: Request, { params }: RouteParams) {
     }
   } catch (error) {
     console.error("LLM turn error:", error);
-    return NextResponse.json(
-      { error: "Failed to generate client response. Check LLM configuration." },
-      { status: 502 },
-    );
+    const classified = classifyLlmError(error);
+    return NextResponse.json({ error: classified.message, code: classified.code }, { status: classified.status });
   }
 
   const clientMessage = await db.message.create({

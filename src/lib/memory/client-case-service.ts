@@ -22,7 +22,7 @@ import {
   buildSessionContext,
 } from "@/lib/sessions/prompts";
 
-const OPENING_TIMEOUT_MS = Number(process.env.OPENING_TIMEOUT_MS ?? 90_000);
+const OPENING_TIMEOUT_MS = Number(process.env.OPENING_TIMEOUT_MS ?? 180_000);
 
 const practiceSessionInclude = {
   scenario: true,

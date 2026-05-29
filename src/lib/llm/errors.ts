@@ -42,6 +42,17 @@ export function classifyLlmError(error: unknown): {
   const message = error instanceof Error ? error.message : String(error);
   const lower = message.toLowerCase();
 
+  if (lower.includes("empty response") || lower.includes("reasoning output")) {
+    return {
+      status: 502,
+      message:
+        error instanceof Error
+          ? error.message
+          : "LLM returned no usable content. For Qwen 3.x, set OPENAI_MAX_TOKENS=4096 or higher.",
+      code: "llm_empty_response",
+    };
+  }
+
   if (lower.includes("timed out") || lower.includes("timeout")) {
     return {
       status: 504,

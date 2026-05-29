@@ -6,15 +6,17 @@ import {
 } from "@/components/admin/scenario-management-table";
 import { requireAdmin } from "@/lib/auth/require-role";
 import { getAdminAnalytics, getAdminScenarios } from "@/lib/admin/queries";
+import { checkLlmHealth } from "@/lib/llm/health";
 
 export const dynamic = "force-dynamic";
 
 export default async function AdminDashboardPage() {
   const session = await requireAdmin();
 
-  const [analytics, scenarios] = await Promise.all([
+  const [analytics, scenarios, llmHealth] = await Promise.all([
     getAdminAnalytics(),
     getAdminScenarios(),
+    checkLlmHealth(),
   ]);
 
   return (
@@ -29,6 +31,46 @@ export default async function AdminDashboardPage() {
         </div>
 
         <AdminQuickActions />
+
+        <section className="mt-8 rounded-lg border border-slate-200 bg-white p-5">
+          <h2 className="text-lg font-semibold text-slate-900">LLM connectivity</h2>
+          <p className="mt-1 text-sm text-slate-600">
+            Live check against your configured Ollama/API host from this server.
+          </p>
+          <dl className="mt-4 grid gap-2 text-sm sm:grid-cols-2">
+            <div>
+              <dt className="text-slate-500">Status</dt>
+              <dd className={llmHealth.ok ? "font-medium text-green-700" : "font-medium text-red-700"}>
+                {llmHealth.ok ? "Connected" : "Failed"}
+              </dd>
+            </div>
+            <div>
+              <dt className="text-slate-500">Model</dt>
+              <dd className="font-medium text-slate-900">{llmHealth.model ?? "unset"}</dd>
+            </div>
+            <div>
+              <dt className="text-slate-500">Host</dt>
+              <dd className="font-medium text-slate-900">{llmHealth.baseUrl ?? "unset"}</dd>
+            </div>
+            <div>
+              <dt className="text-slate-500">Latency</dt>
+              <dd className="font-medium text-slate-900">
+                {llmHealth.latencyMs != null ? `${llmHealth.latencyMs} ms` : "—"}
+              </dd>
+            </div>
+          </dl>
+          {llmHealth.replyPreview && (
+            <p className="mt-3 text-sm text-slate-700">
+              Test reply: <span className="font-medium">{llmHealth.replyPreview}</span>
+            </p>
+          )}
+          {llmHealth.error && (
+            <p className="mt-3 text-sm text-red-600">{llmHealth.error}</p>
+          )}
+          {llmHealth.hint && (
+            <p className="mt-2 text-sm text-amber-700">{llmHealth.hint}</p>
+          )}
+        </section>
 
         <section className="mt-8 space-y-4">
           <h2 className="text-lg font-semibold text-slate-900">Platform analytics</h2>
