@@ -77,7 +77,8 @@ export function MyCasesPanel({ initialCases }: { initialCases: ClientCaseItem[] 
               {clientCase.scenario.dsmCategory}
             </p>
             <p className="mt-1 text-xs text-slate-500">
-              {clientCase.sessionCount} session{clientCase.sessionCount === 1 ? "" : "s"} completed
+              {clientCase.sessionCount} session{clientCase.sessionCount === 1 ? "" : "s"} on this
+              case
               {clientCase.activeSessionId ? " · active session in progress" : ""}
             </p>
           </div>

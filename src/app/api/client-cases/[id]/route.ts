@@ -1,7 +1,8 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/auth";
 import { db } from "@/lib/db";
-import { startCaseSession } from "@/lib/memory/client-case-service";
+import { classifyLlmError } from "@/lib/llm/errors";
+import { getActiveSessionForCase, startCaseSession } from "@/lib/memory/client-case-service";
 
 type RouteParams = { params: Promise<{ id: string }> };
 
@@ -49,10 +50,19 @@ export async function POST(_request: Request, { params }: RouteParams) {
   const { id } = await params;
 
   try {
+    const activeForCase = await getActiveSessionForCase(id, session.user.id);
+    if (activeForCase) {
+      return NextResponse.json({ session: activeForCase, resumed: true }, { status: 200 });
+    }
+
     const practiceSession = await startCaseSession(session.user.id, id);
-    return NextResponse.json({ session: practiceSession }, { status: 201 });
+    return NextResponse.json({ session: practiceSession, resumed: false }, { status: 201 });
   } catch (error) {
     console.error("Start case session error:", error);
-    return NextResponse.json({ error: "Failed to start case session" }, { status: 500 });
+    const classified = classifyLlmError(error);
+    return NextResponse.json(
+      { error: classified.message, code: classified.code },
+      { status: classified.status },
+    );
   }
 }

@@ -12,7 +12,7 @@ export default async function DashboardPage() {
   const session = await auth();
   const userId = session!.user!.id;
 
-  const [totals, recentSessions, clientCases] = await Promise.all([
+  const [totals, recentSessions, clientCases, activeSessions] = await Promise.all([
     db.session.aggregate({
       where: { userId, status: "COMPLETED" },
       _sum: { practiceSeconds: true, reviewSeconds: true },
@@ -41,6 +41,10 @@ export default async function DashboardPage() {
       orderBy: { updatedAt: "desc" },
       take: 10,
     }),
+    db.session.findMany({
+      where: { userId, status: "ACTIVE" },
+      select: { id: true, scenarioId: true, clientCaseId: true },
+    }),
   ]);
 
   const practiceSeconds = totals._sum.practiceSeconds ?? 0;
@@ -52,7 +56,11 @@ export default async function DashboardPage() {
     status: item.status,
     sessionCount: item.sessionCount,
     lastSessionAt: item.lastSessionAt?.toISOString() ?? null,
-    activeSessionId: item.sessions[0]?.id ?? null,
+    activeSessionId:
+      item.sessions[0]?.id ??
+      activeSessions.find((session) => session.clientCaseId === item.id)?.id ??
+      activeSessions.find((session) => session.scenarioId === item.scenarioId)?.id ??
+      null,
     scenario: item.scenario,
   }));
 

@@ -26,8 +26,9 @@ export function ScenarioList({ scenarios }: { scenarios: ScenarioListItem[] }) {
         return;
       }
 
-      const data = (await response.json()) as { session: { id: string } };
+      const data = (await response.json()) as { session: { id: string }; resumed?: boolean };
       router.push(`/practice/${data.session.id}`);
+      router.refresh();
     } catch {
       setError("Could not reach the server. Please try again.");
     } finally {

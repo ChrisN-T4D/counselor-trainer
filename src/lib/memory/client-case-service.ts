@@ -22,7 +22,13 @@ import {
   buildSessionContext,
 } from "@/lib/sessions/prompts";
 
-const OPENING_TIMEOUT_MS = 30000;
+const OPENING_TIMEOUT_MS = Number(process.env.OPENING_TIMEOUT_MS ?? 90_000);
+
+const practiceSessionInclude = {
+  scenario: true,
+  clientCase: true,
+  messages: { orderBy: { sequence: "asc" as const } },
+};
 
 async function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
   let timeoutId: NodeJS.Timeout | undefined;
@@ -99,11 +105,29 @@ export async function findOrCreateClientCase(userId: string, scenarioId: string)
 export async function getActiveSessionForCase(clientCaseId: string, userId: string) {
   return db.session.findFirst({
     where: { clientCaseId, userId, status: "ACTIVE" },
-    include: {
-      scenario: true,
-      clientCase: true,
-      messages: { orderBy: { sequence: "asc" } },
-    },
+    include: practiceSessionInclude,
+  });
+}
+
+export async function getActiveSessionForScenario(userId: string, scenarioId: string) {
+  return db.session.findFirst({
+    where: { userId, scenarioId, status: "ACTIVE" },
+    include: practiceSessionInclude,
+    orderBy: { startedAt: "desc" },
+  });
+}
+
+async function linkSessionToClientCase(sessionId: string, clientCaseId: string) {
+  await db.session.update({
+    where: { id: sessionId },
+    data: { clientCaseId },
+  });
+}
+
+async function reloadPracticeSession(sessionId: string) {
+  return db.session.findFirst({
+    where: { id: sessionId },
+    include: practiceSessionInclude,
   });
 }
 
@@ -117,9 +141,20 @@ export async function startCaseSession(userId: string, clientCaseId: string) {
     throw new Error("Client case not found");
   }
 
-  const active = await getActiveSessionForCase(clientCaseId, userId);
-  if (active) {
-    return active;
+  const activeForCase = await getActiveSessionForCase(clientCaseId, userId);
+  if (activeForCase) {
+    return activeForCase;
+  }
+
+  const activeForScenario = await getActiveSessionForScenario(userId, clientCase.scenarioId);
+  if (activeForScenario) {
+    if (activeForScenario.clientCaseId !== clientCaseId) {
+      await linkSessionToClientCase(activeForScenario.id, clientCaseId);
+    }
+    const reloaded = await reloadPracticeSession(activeForScenario.id);
+    if (reloaded) {
+      return reloaded;
+    }
   }
 
   const sessionNumber = clientCase.sessionCount + 1;
@@ -170,11 +205,7 @@ export async function startCaseSession(userId: string, clientCaseId: string) {
           create: [{ role: "CLIENT", content: clientOpening, sequence: 1 }],
         },
       },
-      include: {
-        scenario: true,
-        clientCase: true,
-        messages: { orderBy: { sequence: "asc" } },
-      },
+      include: practiceSessionInclude,
     });
 
     await tx.clientCase.update({
