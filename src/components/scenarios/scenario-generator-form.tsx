@@ -232,13 +232,17 @@ export function ScenarioGeneratorForm({ onGenerated }: Props) {
       <p className="mt-3 text-xs text-slate-500">
         Participants for this context: {participants.join(", ")}
       </p>
+      <p className="mt-2 text-xs text-slate-500">
+        Generation may take 1–3 minutes on slower models. For faster results, use a smaller
+        model via OPENAI_SCENARIO_MODEL on the server.
+      </p>
 
       <button
         type="submit"
         disabled={loading}
         className="mt-4 rounded-md bg-slate-900 px-4 py-2 text-sm text-white hover:bg-slate-800 disabled:opacity-50"
       >
-        {loading ? "Generating scenario..." : "Generate scenario"}
+        {loading ? "Generating scenario (please wait)..." : "Generate scenario"}
       </button>
 
       {error && <p className="mt-3 text-sm text-red-600">{error}</p>}

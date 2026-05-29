@@ -2,7 +2,11 @@ import { NextResponse } from "next/server";
 import { auth } from "@/auth";
 import { db } from "@/lib/db";
 import { createLlmProvider } from "@/lib/llm/factory";
-import { getLlmConfigIssues, llmConfigErrorMessage } from "@/lib/llm/config";
+import {
+  getLlmConfigIssues,
+  getScenarioGenerationTimeoutMs,
+  llmConfigErrorMessage,
+} from "@/lib/llm/config";
 import { classifyLlmError } from "@/lib/llm/errors";
 import {
   generateScenarioFromSettings,
@@ -20,7 +24,9 @@ function acuityFromUrgency(sessionUrgency: number) {
   return "high";
 }
 
-const GENERATION_TIMEOUT_MS = 90_000;
+export const maxDuration = 300;
+
+const GENERATION_TIMEOUT_MS = getScenarioGenerationTimeoutMs();
 
 async function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
   let timeoutId: NodeJS.Timeout | undefined;

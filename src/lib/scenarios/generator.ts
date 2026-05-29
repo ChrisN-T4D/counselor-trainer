@@ -1,5 +1,10 @@
 import { z } from "zod";
 import type { ScenarioContextType } from "@/generated/prisma/client";
+import {
+  getScenarioGenerationTimeoutMs,
+  getScenarioMaxTokens,
+  getScenarioModel,
+} from "@/lib/llm/config";
 import type { LlmProvider } from "@/lib/llm/provider";
 
 export const scenarioGenerationInputSchema = z.object({
@@ -93,8 +98,9 @@ Rules:
 - This write-up is hidden until after session completion.
 - Case details must be realistic and internally consistent.
 - Avoid definitive diagnosis language; use training-oriented conceptualization.
-- Make systemPrompt role-play ready for the client perspective in first person.
-- Objectives should be concrete counseling skills for this case.`;
+- Make systemPrompt role-play ready for the client perspective in first person (under 400 words).
+- Objectives: 3 concrete counseling skills (one short sentence each).
+- Keep each caseWriteup field to 2-3 sentences (roughly 40-120 characters each). Be concise.`;
 }
 
 function parseLlmJson(content: string): unknown {
@@ -121,17 +127,26 @@ export async function generateScenarioFromSettings(
   input: ScenarioGenerationInput,
 ): Promise<GeneratedScenario> {
   const prompt = buildGenerationPrompt(input);
-  const raw = await llm.complete([
+  const raw = await llm.complete(
+    [
+      {
+        role: "system",
+        content:
+          "You generate counselor training scenarios. Output strict JSON only. Be concise in every field.",
+      },
+      {
+        role: "user",
+        content: prompt,
+      },
+    ],
     {
-      role: "system",
-      content:
-        "You generate high-fidelity counselor training scenarios. Output strict JSON only.",
+      model: getScenarioModel(),
+      maxTokens: getScenarioMaxTokens(),
+      timeoutMs: getScenarioGenerationTimeoutMs(),
+      jsonMode: true,
+      temperature: 0.6,
     },
-    {
-      role: "user",
-      content: prompt,
-    },
-  ]);
+  );
 
   const parsed = parseLlmJson(raw);
   return generatedScenarioSchema.parse(parsed);

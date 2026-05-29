@@ -1,13 +1,12 @@
 import OpenAI from "openai";
 import {
   getLlmConfigIssues,
+  getLlmTimeoutMs,
   llmConfigErrorMessage,
   normalizeOpenAiBaseUrl,
 } from "@/lib/llm/config";
 import { LlmConfigError } from "@/lib/llm/errors";
-import type { ChatMessage, LlmProvider } from "./provider";
-
-const DEFAULT_TIMEOUT_MS = 120_000;
+import type { ChatMessage, CompleteOptions, LlmProvider } from "./provider";
 
 function assertLlmConfigured() {
   const issues = getLlmConfigIssues();
@@ -16,45 +15,55 @@ function assertLlmConfigured() {
   }
 }
 
-function createClient() {
+function createClient(timeoutMs: number) {
   assertLlmConfigured();
   const baseURL = normalizeOpenAiBaseUrl(process.env.OPENAI_BASE_URL!.trim());
 
   return new OpenAI({
     baseURL,
     apiKey: process.env.OPENAI_API_KEY ?? "unused",
-    timeout: DEFAULT_TIMEOUT_MS,
+    timeout: timeoutMs,
   });
 }
 
 export function createOpenAiCompatibleLlm(): LlmProvider {
-  const model = process.env.OPENAI_MODEL?.trim() || "llama3.1";
+  const defaultModel = process.env.OPENAI_MODEL?.trim() || "llama3.1";
 
   return {
-    async complete(messages: ChatMessage[]) {
-      const client = createClient();
+    async complete(messages: ChatMessage[], options?: CompleteOptions) {
+      const model = options?.model ?? defaultModel;
+      const timeoutMs = options?.timeoutMs ?? getLlmTimeoutMs();
+      const client = createClient(timeoutMs);
+      const useJsonMode = options?.jsonMode ?? false;
+      const temperature = options?.temperature ?? 0.7;
+
+      const baseParams = {
+        model,
+        messages,
+        temperature,
+        ...(options?.maxTokens ? { max_tokens: options.maxTokens } : {}),
+      };
+
       let response;
-      try {
-        response = await client.chat.completions.create({
-          model,
-          messages,
-          temperature: 0.7,
-          response_format: { type: "json_object" },
-        });
-      } catch (error) {
-        const message = error instanceof Error ? error.message.toLowerCase() : "";
-        const jsonModeUnsupported =
-          message.includes("response_format") ||
-          message.includes("json_object") ||
-          message.includes("not supported");
-        if (!jsonModeUnsupported) {
-          throw error;
+      if (useJsonMode) {
+        try {
+          response = await client.chat.completions.create({
+            ...baseParams,
+            response_format: { type: "json_object" },
+          });
+        } catch (error) {
+          const message = error instanceof Error ? error.message.toLowerCase() : "";
+          const jsonModeUnsupported =
+            message.includes("response_format") ||
+            message.includes("json_object") ||
+            message.includes("not supported");
+          if (!jsonModeUnsupported) {
+            throw error;
+          }
+          response = await client.chat.completions.create(baseParams);
         }
-        response = await client.chat.completions.create({
-          model,
-          messages,
-          temperature: 0.7,
-        });
+      } else {
+        response = await client.chat.completions.create(baseParams);
       }
 
       const content = response.choices[0]?.message?.content?.trim();
@@ -66,9 +75,9 @@ export function createOpenAiCompatibleLlm(): LlmProvider {
     },
 
     async *stream(messages: ChatMessage[]) {
-      const client = createClient();
+      const client = createClient(getLlmTimeoutMs());
       const stream = await client.chat.completions.create({
-        model,
+        model: defaultModel,
         messages,
         temperature: 0.8,
         stream: true,

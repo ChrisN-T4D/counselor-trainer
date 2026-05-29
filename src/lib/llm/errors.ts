@@ -30,7 +30,8 @@ export function classifyLlmError(error: unknown): {
   if (error instanceof LlmTimeoutError) {
     return {
       status: 504,
-      message: "The model took too long to respond. Try again or use a smaller/faster model.",
+      message:
+        "Scenario generation timed out. Use a faster model (e.g. llama3.2:3b), set OPENAI_SCENARIO_MODEL, or increase SCENARIO_GENERATION_TIMEOUT_MS.",
       code: "llm_timeout",
     };
   }
@@ -44,7 +45,8 @@ export function classifyLlmError(error: unknown): {
   if (lower.includes("timed out") || lower.includes("timeout")) {
     return {
       status: 504,
-      message: "The model took too long to respond. Try again or use a smaller/faster model.",
+      message:
+        "Scenario generation timed out. Use a faster model (e.g. llama3.2:3b), set OPENAI_SCENARIO_MODEL, or increase SCENARIO_GENERATION_TIMEOUT_MS.",
       code: "llm_timeout",
     };
   }
