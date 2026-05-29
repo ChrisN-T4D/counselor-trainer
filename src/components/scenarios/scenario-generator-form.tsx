@@ -78,7 +78,7 @@ export function ScenarioGeneratorForm({ onGenerated }: Props) {
       });
 
       if (!response.ok) {
-        const data = (await response.json()) as { error?: string };
+        const data = (await response.json()) as { error?: string; code?: string };
         setError(data.error ?? "Failed to generate scenario");
         return;
       }

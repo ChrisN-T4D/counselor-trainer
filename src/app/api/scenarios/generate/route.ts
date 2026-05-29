@@ -2,6 +2,8 @@ import { NextResponse } from "next/server";
 import { auth } from "@/auth";
 import { db } from "@/lib/db";
 import { createLlmProvider } from "@/lib/llm/factory";
+import { getLlmConfigIssues, llmConfigErrorMessage } from "@/lib/llm/config";
+import { classifyLlmError } from "@/lib/llm/errors";
 import {
   generateScenarioFromSettings,
   scenarioGenerationInputSchema,
@@ -18,7 +20,7 @@ function acuityFromUrgency(sessionUrgency: number) {
   return "high";
 }
 
-const GENERATION_TIMEOUT_MS = 40000;
+const GENERATION_TIMEOUT_MS = 90_000;
 
 async function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
   let timeoutId: NodeJS.Timeout | undefined;
@@ -41,6 +43,14 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
+  const configIssues = getLlmConfigIssues();
+  if (configIssues.length > 0) {
+    return NextResponse.json(
+      { error: llmConfigErrorMessage(configIssues), code: "llm_config" },
+      { status: 503 },
+    );
+  }
+
   const body = await request.json();
   const parsedInput = scenarioGenerationInputSchema.safeParse(body);
   if (!parsedInput.success) {
@@ -56,12 +66,10 @@ export async function POST(request: Request) {
     );
   } catch (error) {
     console.error("Scenario generation error:", error);
+    const classified = classifyLlmError(error);
     return NextResponse.json(
-      {
-        error:
-          "Could not generate scenario right now. Check model connectivity and try again.",
-      },
-      { status: 504 },
+      { error: classified.message, code: classified.code },
+      { status: classified.status },
     );
   }
 
