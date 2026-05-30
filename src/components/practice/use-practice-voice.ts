@@ -17,14 +17,17 @@ import {
 import { startMicActivityMonitor } from "@/lib/voice/mic-activity-monitor";
 import {
   requestMicrophoneStream,
-  startScribeMicrophoneStream,
+  prepareScribeMicrophoneStream,
   type ScribeMicrophoneStream,
 } from "@/lib/voice/scribe-microphone-stream";
+import { formatScribeRealtimeError } from "@/lib/voice/scribe-errors";
 
 type VoiceStatus = {
   ttsEnabled: boolean;
   sttEnabled: boolean;
   sttRealtime?: boolean;
+  scribeTokenOk?: boolean;
+  scribeError?: string;
 };
 
 export type MicPermissionState = "unknown" | "prompt" | "granted" | "denied";
@@ -36,16 +39,6 @@ export type MutedSpeechPromptState = {
 
 const MUTED_SPEECH_COOLDOWN_MS = 12_000;
 const SCRIBE_CONNECT_TIMEOUT_MS = 15_000;
-
-function scribeErrorMessage(error: unknown): string {
-  if (error instanceof Error) {
-    if (error.message.includes("1006")) {
-      return "Live transcription disconnected. Check your ElevenLabs API key, accept Scribe Realtime terms in the ElevenLabs dashboard, and try again.";
-    }
-    return error.message;
-  }
-  return "Live transcription error";
-}
 
 function buildLiveTranscript(base: string, committed: string[], partial: string): string {
   const segments = [
@@ -106,6 +99,8 @@ export function usePracticeVoice(sessionId: string) {
   const scribeAutoConnectRef = useRef(true);
   const scribeConnectTimeoutRef = useRef<number | null>(null);
   const scribeMicStreamRef = useRef<ScribeMicrophoneStream | null>(null);
+  const scribeSuppressCloseErrorRef = useRef(false);
+  const scribeFailureReportedRef = useRef(false);
 
   const dismissMutedSpeechPrompt = useCallback(() => {
     mutedSpeechPromptVisibleRef.current = false;
@@ -196,7 +191,8 @@ export function usePracticeVoice(sessionId: string) {
     }
   }, [syncMicMuteState]);
 
-  const stopRealtimeListening = useCallback(() => {
+  const stopRealtimeListening = useCallback((options?: { intentional?: boolean }) => {
+    scribeSuppressCloseErrorRef.current = options?.intentional ?? false;
     if (scribeConnectTimeoutRef.current !== null) {
       window.clearTimeout(scribeConnectTimeoutRef.current);
       scribeConnectTimeoutRef.current = null;
@@ -211,6 +207,7 @@ export function usePracticeVoice(sessionId: string) {
     userMutedRef.current = false;
     playbackSuppressedRef.current = false;
     setMicMuted(false);
+    scribeSuppressCloseErrorRef.current = false;
   }, []);
 
   const blockScribeAutoConnect = useCallback((message?: string) => {
@@ -219,6 +216,17 @@ export function usePracticeVoice(sessionId: string) {
       setVoiceError(message);
     }
   }, []);
+
+  const reportScribeFailure = useCallback(
+    (message: string) => {
+      if (scribeFailureReportedRef.current) {
+        return;
+      }
+      scribeFailureReportedRef.current = true;
+      blockScribeAutoConnect(message);
+    },
+    [blockScribeAutoConnect],
+  );
 
   const allowScribeAutoConnect = useCallback(() => {
     scribeAutoConnectRef.current = true;
@@ -325,14 +333,19 @@ export function usePracticeVoice(sessionId: string) {
     userMutedRef.current = false;
     playbackSuppressedRef.current = clientPlayingRef.current && audioOutputModeRef.current === "speakers";
     scribeSessionReadyRef.current = false;
+    scribeFailureReportedRef.current = false;
 
     let connection: RealtimeConnection | null = null;
     let rejectSessionReady: ((reason: Error) => void) | null = null;
     let micStream: MediaStream | null = null;
+    let preparedMic: Awaited<ReturnType<typeof prepareScribeMicrophoneStream>> | null = null;
+    let micPipelinePromise: ReturnType<typeof prepareScribeMicrophoneStream> | null = null;
 
     try {
       micStream = await requestMicrophoneStream();
       setMicPermission("granted");
+
+      micPipelinePromise = prepareScribeMicrophoneStream(micStream);
 
       const tokenResponse = await fetch("/api/stt/scribe-token");
       if (!tokenResponse.ok) {
@@ -344,6 +357,8 @@ export function usePracticeVoice(sessionId: string) {
         token: string;
         modelId: string;
       };
+
+      preparedMic = await micPipelinePromise;
 
       connection = Scribe.connect({
         token,
@@ -382,20 +397,12 @@ export function usePracticeVoice(sessionId: string) {
           settle(resolve);
         });
 
-        connection!.on(RealtimeEvents.UNACCEPTED_TERMS, () => {
-          settle(() =>
-            reject(
-              new Error(
-                "Accept Scribe Realtime terms in your ElevenLabs account, then reconnect the microphone.",
-              ),
-            ),
-          );
+        connection!.on(RealtimeEvents.UNACCEPTED_TERMS, (data) => {
+          settle(() => reject(new Error(formatScribeRealtimeError(data))));
         });
 
         connection!.on(RealtimeEvents.AUTH_ERROR, (data) => {
-          settle(() =>
-            reject(new Error(data.error ?? "ElevenLabs authentication failed for live transcription")),
-          );
+          settle(() => reject(new Error(formatScribeRealtimeError(data))));
         });
       });
 
@@ -416,13 +423,8 @@ export function usePracticeVoice(sessionId: string) {
       });
 
       connection.on(RealtimeEvents.ERROR, (data) => {
-        const message =
-          data instanceof Error
-            ? scribeErrorMessage(data)
-            : typeof data === "object" && data !== null && "error" in data
-              ? String((data as { error?: string }).error ?? "Live transcription error")
-              : scribeErrorMessage(data);
-        blockScribeAutoConnect(message);
+        reportScribeFailure(formatScribeRealtimeError(data));
+        stopRealtimeListening({ intentional: true });
       });
 
       connection.on(RealtimeEvents.CLOSE, () => {
@@ -438,47 +440,48 @@ export function usePracticeVoice(sessionId: string) {
           rejectSessionReady = null;
         }
 
-        stopRealtimeListening();
-        blockScribeAutoConnect(
+        const suppressError = scribeSuppressCloseErrorRef.current || scribeFailureReportedRef.current;
+        stopRealtimeListening({ intentional: true });
+
+        if (suppressError) {
+          return;
+        }
+
+        reportScribeFailure(
           hadSession
             ? "Live transcription disconnected. Click Reconnect microphone to try again."
             : "Could not connect live transcription. Check ElevenLabs voice settings and try reconnecting.",
         );
       });
 
-      if (!loadAudioOutputMode()) {
-        const detected = await detectLikelyAudioOutputMode();
-        if (detected) {
-          audioOutputModeRef.current = detected;
-          setAudioOutputModeState(detected);
-          setAudioOutputModeHint("detected");
-          saveAudioOutputMode(detected);
-        }
-      }
-
       await sessionReadyPromise;
 
-      scribeMicStreamRef.current = await startScribeMicrophoneStream(
-        connection,
-        {
-          echoCancellation: true,
-          noiseSuppression: true,
-          autoGainControl: true,
-        },
-        () =>
-          scribeConnectionRef.current === connection && scribeSessionReadyRef.current,
-        micStream,
+      scribeMicStreamRef.current = preparedMic.attach(connection, () =>
+        scribeConnectionRef.current === connection && scribeSessionReadyRef.current,
       );
+      preparedMic = null;
       micStream = null;
 
       setListening(true);
       syncMicMuteState();
-    } catch (error) {
-      micStream?.getTracks().forEach((track) => track.stop());
-      stopRealtimeListening();
 
-      const message =
-        error instanceof Error ? error.message : "Could not start live transcription";
+      if (!loadAudioOutputMode()) {
+        void detectLikelyAudioOutputMode().then((detected) => {
+          if (!detected) {
+            return;
+          }
+          audioOutputModeRef.current = detected;
+          setAudioOutputModeState(detected);
+          setAudioOutputModeHint("detected");
+          saveAudioOutputMode(detected);
+        });
+      }
+    } catch (error) {
+      preparedMic?.cleanup();
+      void micPipelinePromise?.then((pipeline) => pipeline.cleanup()).catch(() => {});
+      micStream?.getTracks().forEach((track) => track.stop());
+      stopRealtimeListening({ intentional: true });
+
       const denied =
         error instanceof DOMException &&
         (error.name === "NotAllowedError" || error.name === "PermissionDeniedError");
@@ -487,20 +490,20 @@ export function usePracticeVoice(sessionId: string) {
         setMicPermission("denied");
       }
 
-      blockScribeAutoConnect(
+      reportScribeFailure(
         denied
           ? "Microphone access was denied. Allow microphone access in your browser to speak during the session."
-          : scribeErrorMessage(error),
+          : formatScribeRealtimeError(error),
       );
     } finally {
       startInFlightRef.current = false;
       setConnectingMic(false);
     }
   }, [
-    blockScribeAutoConnect,
     listening,
     maybeBargeInOnSpeech,
     pushLiveTranscript,
+    reportScribeFailure,
     stopRealtimeListening,
     syncMicMuteState,
   ]);
@@ -511,6 +514,7 @@ export function usePracticeVoice(sessionId: string) {
     }
 
     allowScribeAutoConnect();
+    scribeFailureReportedRef.current = false;
     setVoiceError(null);
     await startRealtimeListening();
   }, [allowScribeAutoConnect, startRealtimeListening, voiceStatus.sttEnabled, voiceStatus.sttRealtime]);
@@ -551,7 +555,7 @@ export function usePracticeVoice(sessionId: string) {
     (active: boolean) => {
       sessionActiveRef.current = active;
       if (!active) {
-        stopRealtimeListening();
+        stopRealtimeListening({ intentional: true });
         stopPlayback();
         allowScribeAutoConnect();
         return;
@@ -601,6 +605,9 @@ export function usePracticeVoice(sessionId: string) {
       }
       const data = (await response.json()) as VoiceStatus;
       setVoiceStatus(data);
+      if (data.scribeTokenOk === false && data.scribeError) {
+        setVoiceError(data.scribeError);
+      }
     }
 
     loadVoiceStatus();
@@ -682,7 +689,7 @@ export function usePracticeVoice(sessionId: string) {
     return () => {
       activityMonitorRef.current?.stop();
       stopPlayback();
-      stopRealtimeListening();
+      stopRealtimeListening({ intentional: true });
       if (mediaRecorderRef.current?.state !== "inactive") {
         mediaRecorderRef.current?.stop();
       }

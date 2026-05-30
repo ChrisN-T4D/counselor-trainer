@@ -6,6 +6,7 @@ import {
   getElevenLabsApiKey,
   getElevenLabsSttModelId,
 } from "@/lib/voice/elevenlabs-config";
+import { parseElevenLabsTokenError } from "@/lib/voice/scribe-errors";
 
 export async function GET() {
   const session = await auth();
@@ -29,21 +30,7 @@ export async function GET() {
       const body = await response.text();
       console.error("ElevenLabs scribe token error:", body);
 
-      let message = "Could not create Scribe token";
-      try {
-        const parsed = JSON.parse(body) as { detail?: { status?: string; message?: string } };
-        const status = parsed.detail?.status;
-        if (status === "unaccepted_terms") {
-          message =
-            "Accept Scribe Realtime terms at elevenlabs.io/app/speech-to-text (or elevenlabs.io/scribe-v2-realtime-terms), then reconnect.";
-        } else if (parsed.detail?.message) {
-          message = parsed.detail.message;
-        }
-      } catch {
-        // Keep generic message when body is not JSON.
-      }
-
-      return NextResponse.json({ error: message }, { status: 502 });
+      return NextResponse.json({ error: parseElevenLabsTokenError(body) }, { status: 502 });
     }
 
     const data = (await response.json()) as { token?: string };

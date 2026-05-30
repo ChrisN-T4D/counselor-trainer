@@ -24,6 +24,11 @@ export type ScribeMicrophoneStream = {
   setTrackEnabled: (enabled: boolean) => void;
 };
 
+type PreparedScribeMicrophone = {
+  attach: (connection: RealtimeConnection, isActive: () => boolean) => ScribeMicrophoneStream;
+  cleanup: () => void;
+};
+
 function arrayBufferToBase64(buffer: ArrayBuffer): string {
   const bytes = new Uint8Array(buffer);
   return btoa(String.fromCharCode(...bytes));
@@ -36,6 +41,80 @@ export async function requestMicrophoneStream(): Promise<MediaStream> {
 
 function isLiveStream(stream: MediaStream): boolean {
   return stream.getAudioTracks().some((track) => track.readyState === "live");
+}
+
+async function createMicrophonePipeline(
+  stream: MediaStream,
+): Promise<{
+  audioTrack: MediaStreamTrack;
+  source: MediaStreamAudioSourceNode;
+  scribeNode: AudioWorkletNode;
+  audioContext: AudioContext;
+}> {
+  const [audioTrack] = stream.getAudioTracks();
+  const streamSampleRate = audioTrack?.getSettings().sampleRate;
+  const audioContext = new AudioContext(streamSampleRate ? { sampleRate: streamSampleRate } : {});
+
+  await loadScribeAudioProcessor(audioContext.audioWorklet);
+
+  const source = audioContext.createMediaStreamSource(stream);
+  const scribeNode = new AudioWorkletNode(audioContext, "scribeAudioProcessor");
+
+  if (audioContext.sampleRate !== TARGET_SAMPLE_RATE) {
+    scribeNode.port.postMessage({
+      type: "configure",
+      inputSampleRate: audioContext.sampleRate,
+      outputSampleRate: TARGET_SAMPLE_RATE,
+    });
+  }
+
+  source.connect(scribeNode);
+
+  if (audioContext.state === "suspended") {
+    await audioContext.resume();
+  }
+
+  return { audioTrack, source, scribeNode, audioContext };
+}
+
+/** Load the audio worklet while the Scribe WebSocket handshake runs. */
+export async function prepareScribeMicrophoneStream(
+  stream: MediaStream,
+): Promise<PreparedScribeMicrophone> {
+  const pipeline = await createMicrophonePipeline(stream);
+
+  const cleanup = () => {
+    for (const track of stream.getTracks()) {
+      track.stop();
+    }
+    pipeline.source.disconnect();
+    pipeline.scribeNode.disconnect();
+    void pipeline.audioContext.close();
+  };
+
+  return {
+    cleanup,
+    attach: (connection, isActive) => {
+      pipeline.scribeNode.port.onmessage = (event: MessageEvent<{ audioData: ArrayBuffer }>) => {
+        if (!isActive()) {
+          return;
+        }
+
+        try {
+          connection.send({ audioBase64: arrayBufferToBase64(event.data.audioData) });
+        } catch {
+          // Connection closed — ignore further audio frames.
+        }
+      };
+
+      return {
+        cleanup,
+        setTrackEnabled: (enabled: boolean) => {
+          pipeline.audioTrack.enabled = enabled;
+        },
+      };
+    },
+  };
 }
 
 export async function startScribeMicrophoneStream(
@@ -57,54 +136,6 @@ export async function startScribeMicrophoneStream(
           },
         });
 
-  const [audioTrack] = stream.getAudioTracks();
-  const streamSampleRate = audioTrack?.getSettings().sampleRate;
-  const audioContext = new AudioContext(streamSampleRate ? { sampleRate: streamSampleRate } : {});
-
-  await loadScribeAudioProcessor(audioContext.audioWorklet);
-
-  const source = audioContext.createMediaStreamSource(stream);
-  const scribeNode = new AudioWorkletNode(audioContext, "scribeAudioProcessor");
-
-  if (audioContext.sampleRate !== TARGET_SAMPLE_RATE) {
-    scribeNode.port.postMessage({
-      type: "configure",
-      inputSampleRate: audioContext.sampleRate,
-      outputSampleRate: TARGET_SAMPLE_RATE,
-    });
-  }
-
-  scribeNode.port.onmessage = (event: MessageEvent<{ audioData: ArrayBuffer }>) => {
-    if (!isActive()) {
-      return;
-    }
-
-    try {
-      connection.send({ audioBase64: arrayBufferToBase64(event.data.audioData) });
-    } catch {
-      // Connection closed — ignore further audio frames.
-    }
-  };
-
-  source.connect(scribeNode);
-
-  if (audioContext.state === "suspended") {
-    await audioContext.resume();
-  }
-
-  const cleanup = () => {
-    for (const track of stream.getTracks()) {
-      track.stop();
-    }
-    source.disconnect();
-    scribeNode.disconnect();
-    void audioContext.close();
-  };
-
-  return {
-    cleanup,
-    setTrackEnabled: (enabled: boolean) => {
-      audioTrack.enabled = enabled;
-    },
-  };
+  const prepared = await prepareScribeMicrophoneStream(stream);
+  return prepared.attach(connection, isActive);
 }
