@@ -28,7 +28,22 @@ export async function GET() {
     if (!response.ok) {
       const body = await response.text();
       console.error("ElevenLabs scribe token error:", body);
-      return NextResponse.json({ error: "Could not create Scribe token" }, { status: 502 });
+
+      let message = "Could not create Scribe token";
+      try {
+        const parsed = JSON.parse(body) as { detail?: { status?: string; message?: string } };
+        const status = parsed.detail?.status;
+        if (status === "unaccepted_terms") {
+          message =
+            "Accept Scribe Realtime terms at elevenlabs.io/app/speech-to-text (or elevenlabs.io/scribe-v2-realtime-terms), then reconnect.";
+        } else if (parsed.detail?.message) {
+          message = parsed.detail.message;
+        }
+      } catch {
+        // Keep generic message when body is not JSON.
+      }
+
+      return NextResponse.json({ error: message }, { status: 502 });
     }
 
     const data = (await response.json()) as { token?: string };

@@ -1,6 +1,6 @@
 "use client";
 
-import { CommitStrategy, RealtimeEvents, Scribe } from "@elevenlabs/client";
+import { AudioFormat, CommitStrategy, RealtimeEvents, Scribe } from "@elevenlabs/client";
 import type { RealtimeConnection } from "@elevenlabs/client";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
@@ -15,6 +15,11 @@ import {
 } from "@/lib/voice/audio-output-mode";
 
 import { startMicActivityMonitor } from "@/lib/voice/mic-activity-monitor";
+import {
+  requestMicrophoneStream,
+  startScribeMicrophoneStream,
+  type ScribeMicrophoneStream,
+} from "@/lib/voice/scribe-microphone-stream";
 
 type VoiceStatus = {
   ttsEnabled: boolean;
@@ -100,6 +105,7 @@ export function usePracticeVoice(sessionId: string) {
   const scribeSessionReadyRef = useRef(false);
   const scribeAutoConnectRef = useRef(true);
   const scribeConnectTimeoutRef = useRef<number | null>(null);
+  const scribeMicStreamRef = useRef<ScribeMicrophoneStream | null>(null);
 
   const dismissMutedSpeechPrompt = useCallback(() => {
     mutedSpeechPromptVisibleRef.current = false;
@@ -126,20 +132,15 @@ export function usePracticeVoice(sessionId: string) {
   }, []);
 
   const syncMicMuteState = useCallback(() => {
-    const connection = scribeConnectionRef.current;
     const shouldMute = userMutedRef.current || playbackSuppressedRef.current;
 
-    if (!connection || !listening) {
+    if (!scribeMicStreamRef.current || !listening) {
       setMicMuted(shouldMute);
       return;
     }
 
     try {
-      if (shouldMute) {
-        connection.mute();
-      } else {
-        connection.unmute();
-      }
+      scribeMicStreamRef.current.setTrackEnabled(!shouldMute);
       setMicMuted(shouldMute);
     } catch (error) {
       setVoiceError(error instanceof Error ? error.message : "Could not change microphone mute state");
@@ -200,6 +201,8 @@ export function usePracticeVoice(sessionId: string) {
       window.clearTimeout(scribeConnectTimeoutRef.current);
       scribeConnectTimeoutRef.current = null;
     }
+    scribeMicStreamRef.current?.cleanup();
+    scribeMicStreamRef.current = null;
     scribeConnectionRef.current?.close();
     scribeConnectionRef.current = null;
     partialTranscriptRef.current = "";
@@ -325,8 +328,12 @@ export function usePracticeVoice(sessionId: string) {
 
     let connection: RealtimeConnection | null = null;
     let rejectSessionReady: ((reason: Error) => void) | null = null;
+    let micStream: MediaStream | null = null;
 
     try {
+      micStream = await requestMicrophoneStream();
+      setMicPermission("granted");
+
       const tokenResponse = await fetch("/api/stt/scribe-token");
       if (!tokenResponse.ok) {
         const data = (await tokenResponse.json().catch(() => ({}))) as { error?: string };
@@ -343,11 +350,8 @@ export function usePracticeVoice(sessionId: string) {
         modelId,
         commitStrategy: CommitStrategy.VAD,
         vadSilenceThresholdSecs: 1.2,
-        microphone: {
-          echoCancellation: true,
-          noiseSuppression: true,
-          autoGainControl: true,
-        },
+        audioFormat: AudioFormat.PCM_16000,
+        sampleRate: 16000,
       });
 
       scribeConnectionRef.current = connection;
@@ -374,9 +378,6 @@ export function usePracticeVoice(sessionId: string) {
 
         connection!.on(RealtimeEvents.SESSION_STARTED, () => {
           scribeSessionReadyRef.current = true;
-          setMicPermission("granted");
-          setListening(true);
-          syncMicMuteState();
           pushLiveTranscript();
           settle(resolve);
         });
@@ -456,11 +457,25 @@ export function usePracticeVoice(sessionId: string) {
       }
 
       await sessionReadyPromise;
+
+      scribeMicStreamRef.current = await startScribeMicrophoneStream(
+        connection,
+        {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+        },
+        () =>
+          scribeConnectionRef.current === connection && scribeSessionReadyRef.current,
+        micStream,
+      );
+      micStream = null;
+
+      setListening(true);
+      syncMicMuteState();
     } catch (error) {
-      connection?.close();
-      if (scribeConnectionRef.current === connection) {
-        scribeConnectionRef.current = null;
-      }
+      micStream?.getTracks().forEach((track) => track.stop());
+      stopRealtimeListening();
 
       const message =
         error instanceof Error ? error.message : "Could not start live transcription";

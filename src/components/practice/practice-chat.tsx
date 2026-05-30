@@ -335,7 +335,7 @@ export function PracticeChat({ sessionId }: { sessionId: string }) {
     voiceStatus.sttEnabled &&
     voiceStatus.sttRealtime &&
     practiceSession.status === "ACTIVE" &&
-    (micPermission === "prompt" || micPermission === "denied") &&
+    (micPermission === "unknown" || micPermission === "prompt" || micPermission === "denied") &&
     !listening;
   const showMicReconnect =
     voiceStatus.sttEnabled &&
