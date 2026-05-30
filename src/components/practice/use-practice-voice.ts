@@ -30,6 +30,17 @@ export type MutedSpeechPromptState = {
 };
 
 const MUTED_SPEECH_COOLDOWN_MS = 12_000;
+const SCRIBE_CONNECT_TIMEOUT_MS = 15_000;
+
+function scribeErrorMessage(error: unknown): string {
+  if (error instanceof Error) {
+    if (error.message.includes("1006")) {
+      return "Live transcription disconnected. Check your ElevenLabs API key, accept Scribe Realtime terms in the ElevenLabs dashboard, and try again.";
+    }
+    return error.message;
+  }
+  return "Live transcription error";
+}
 
 function buildLiveTranscript(base: string, committed: string[], partial: string): string {
   const segments = [
@@ -86,6 +97,9 @@ export function usePracticeVoice(sessionId: string) {
   );
   const mutedSpeechCooldownUntilRef = useRef(0);
   const mutedSpeechPromptVisibleRef = useRef(false);
+  const scribeSessionReadyRef = useRef(false);
+  const scribeAutoConnectRef = useRef(true);
+  const scribeConnectTimeoutRef = useRef<number | null>(null);
 
   const dismissMutedSpeechPrompt = useCallback(() => {
     mutedSpeechPromptVisibleRef.current = false;
@@ -182,13 +196,29 @@ export function usePracticeVoice(sessionId: string) {
   }, [syncMicMuteState]);
 
   const stopRealtimeListening = useCallback(() => {
+    if (scribeConnectTimeoutRef.current !== null) {
+      window.clearTimeout(scribeConnectTimeoutRef.current);
+      scribeConnectTimeoutRef.current = null;
+    }
     scribeConnectionRef.current?.close();
     scribeConnectionRef.current = null;
     partialTranscriptRef.current = "";
+    scribeSessionReadyRef.current = false;
     setListening(false);
     userMutedRef.current = false;
     playbackSuppressedRef.current = false;
     setMicMuted(false);
+  }, []);
+
+  const blockScribeAutoConnect = useCallback((message?: string) => {
+    scribeAutoConnectRef.current = false;
+    if (message) {
+      setVoiceError(message);
+    }
+  }, []);
+
+  const allowScribeAutoConnect = useCallback(() => {
+    scribeAutoConnectRef.current = true;
   }, []);
 
   const syncTranscriptBase = useCallback((text: string) => {
@@ -278,11 +308,23 @@ export function usePracticeVoice(sessionId: string) {
     startInFlightRef.current = true;
     setConnectingMic(true);
     setVoiceError(null);
+    if (scribeConnectionRef.current) {
+      scribeConnectionRef.current.close();
+      scribeConnectionRef.current = null;
+    }
+    if (scribeConnectTimeoutRef.current !== null) {
+      window.clearTimeout(scribeConnectTimeoutRef.current);
+      scribeConnectTimeoutRef.current = null;
+    }
     baseInputRef.current = inputGetterRef.current();
     committedSegmentsRef.current = [];
     partialTranscriptRef.current = "";
     userMutedRef.current = false;
     playbackSuppressedRef.current = clientPlayingRef.current && audioOutputModeRef.current === "speakers";
+    scribeSessionReadyRef.current = false;
+
+    let connection: RealtimeConnection | null = null;
+    let rejectSessionReady: ((reason: Error) => void) | null = null;
 
     try {
       const tokenResponse = await fetch("/api/stt/scribe-token");
@@ -296,7 +338,7 @@ export function usePracticeVoice(sessionId: string) {
         modelId: string;
       };
 
-      const connection = Scribe.connect({
+      connection = Scribe.connect({
         token,
         modelId,
         commitStrategy: CommitStrategy.VAD,
@@ -309,6 +351,52 @@ export function usePracticeVoice(sessionId: string) {
       });
 
       scribeConnectionRef.current = connection;
+
+      const sessionReadyPromise = new Promise<void>((resolve, reject) => {
+        rejectSessionReady = reject;
+        let settled = false;
+        const settle = (action: () => void) => {
+          if (settled) {
+            return;
+          }
+          settled = true;
+          rejectSessionReady = null;
+          if (scribeConnectTimeoutRef.current !== null) {
+            window.clearTimeout(scribeConnectTimeoutRef.current);
+            scribeConnectTimeoutRef.current = null;
+          }
+          action();
+        };
+
+        scribeConnectTimeoutRef.current = window.setTimeout(() => {
+          settle(() => reject(new Error("Timed out waiting for live transcription to start")));
+        }, SCRIBE_CONNECT_TIMEOUT_MS);
+
+        connection!.on(RealtimeEvents.SESSION_STARTED, () => {
+          scribeSessionReadyRef.current = true;
+          setMicPermission("granted");
+          setListening(true);
+          syncMicMuteState();
+          pushLiveTranscript();
+          settle(resolve);
+        });
+
+        connection!.on(RealtimeEvents.UNACCEPTED_TERMS, () => {
+          settle(() =>
+            reject(
+              new Error(
+                "Accept Scribe Realtime terms in your ElevenLabs account, then reconnect the microphone.",
+              ),
+            ),
+          );
+        });
+
+        connection!.on(RealtimeEvents.AUTH_ERROR, (data) => {
+          settle(() =>
+            reject(new Error(data.error ?? "ElevenLabs authentication failed for live transcription")),
+          );
+        });
+      });
 
       connection.on(RealtimeEvents.PARTIAL_TRANSCRIPT, (data) => {
         partialTranscriptRef.current = data.text;
@@ -327,17 +415,35 @@ export function usePracticeVoice(sessionId: string) {
       });
 
       connection.on(RealtimeEvents.ERROR, (data) => {
-        setVoiceError(data.error ?? "Live transcription error");
+        const message =
+          data instanceof Error
+            ? scribeErrorMessage(data)
+            : typeof data === "object" && data !== null && "error" in data
+              ? String((data as { error?: string }).error ?? "Live transcription error")
+              : scribeErrorMessage(data);
+        blockScribeAutoConnect(message);
       });
 
       connection.on(RealtimeEvents.CLOSE, () => {
-        if (scribeConnectionRef.current === connection) {
-          stopRealtimeListening();
+        if (scribeConnectionRef.current !== connection) {
+          return;
         }
-      });
 
-      setMicPermission("granted");
-      setListening(true);
+        const hadSession = scribeSessionReadyRef.current;
+        if (!hadSession && rejectSessionReady) {
+          rejectSessionReady(
+            new Error("Live transcription connection closed before it finished starting"),
+          );
+          rejectSessionReady = null;
+        }
+
+        stopRealtimeListening();
+        blockScribeAutoConnect(
+          hadSession
+            ? "Live transcription disconnected. Click Reconnect microphone to try again."
+            : "Could not connect live transcription. Check ElevenLabs voice settings and try reconnecting.",
+        );
+      });
 
       if (!loadAudioOutputMode()) {
         const detected = await detectLikelyAudioOutputMode();
@@ -349,9 +455,13 @@ export function usePracticeVoice(sessionId: string) {
         }
       }
 
-      syncMicMuteState();
-      pushLiveTranscript();
+      await sessionReadyPromise;
     } catch (error) {
+      connection?.close();
+      if (scribeConnectionRef.current === connection) {
+        scribeConnectionRef.current = null;
+      }
+
       const message =
         error instanceof Error ? error.message : "Could not start live transcription";
       const denied =
@@ -362,34 +472,44 @@ export function usePracticeVoice(sessionId: string) {
         setMicPermission("denied");
       }
 
-      setVoiceError(
+      blockScribeAutoConnect(
         denied
           ? "Microphone access was denied. Allow microphone access in your browser to speak during the session."
-          : message,
+          : scribeErrorMessage(error),
       );
     } finally {
       startInFlightRef.current = false;
       setConnectingMic(false);
     }
-  }, [listening, maybeBargeInOnSpeech, pushLiveTranscript, setAudioOutputMode, stopRealtimeListening, syncMicMuteState]);
+  }, [
+    blockScribeAutoConnect,
+    listening,
+    maybeBargeInOnSpeech,
+    pushLiveTranscript,
+    stopRealtimeListening,
+    syncMicMuteState,
+  ]);
 
   const requestMicAccess = useCallback(async () => {
     if (!voiceStatus.sttEnabled || !voiceStatus.sttRealtime) {
       return;
     }
 
+    allowScribeAutoConnect();
     setVoiceError(null);
     await startRealtimeListening();
-  }, [startRealtimeListening, voiceStatus.sttEnabled, voiceStatus.sttRealtime]);
+  }, [allowScribeAutoConnect, startRealtimeListening, voiceStatus.sttEnabled, voiceStatus.sttRealtime]);
 
   const tryStartOpenMic = useCallback(async () => {
     if (
       !voiceStatus.sttEnabled ||
       !voiceStatus.sttRealtime ||
       !sessionActiveRef.current ||
+      !scribeAutoConnectRef.current ||
       micPermission !== "granted" ||
       listening ||
-      connectingMic
+      connectingMic ||
+      startInFlightRef.current
     ) {
       return;
     }
@@ -408,9 +528,8 @@ export function usePracticeVoice(sessionId: string) {
     (getInput: () => string, onLiveTranscript: (text: string) => void) => {
       inputGetterRef.current = getInput;
       onLiveTranscriptRef.current = onLiveTranscript;
-      void tryStartOpenMic();
     },
-    [tryStartOpenMic],
+    [],
   );
 
   const setSessionActive = useCallback(
@@ -419,11 +538,12 @@ export function usePracticeVoice(sessionId: string) {
       if (!active) {
         stopRealtimeListening();
         stopPlayback();
+        allowScribeAutoConnect();
         return;
       }
       void tryStartOpenMic();
     },
-    [stopPlayback, stopRealtimeListening, tryStartOpenMic],
+    [allowScribeAutoConnect, stopPlayback, stopRealtimeListening, tryStartOpenMic],
   );
 
   const refreshMicPermission = useCallback(async () => {
@@ -498,7 +618,7 @@ export function usePracticeVoice(sessionId: string) {
     if (micPermission === "granted") {
       void tryStartOpenMic();
     }
-  }, [micPermission, tryStartOpenMic]);
+  }, [micPermission, tryStartOpenMic, voiceStatus.sttEnabled, voiceStatus.sttRealtime]);
 
   useEffect(() => {
     if (!listening || !micMuted || !voiceStatus.sttRealtime) {
