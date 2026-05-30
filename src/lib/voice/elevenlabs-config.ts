@@ -35,7 +35,7 @@ export function resolveElevenLabsTtsModelId(text: string, hasTags: boolean): str
 }
 
 export function getElevenLabsSttModelId(): string {
-  return process.env.ELEVENLABS_STT_MODEL_ID?.trim() || "scribe_v2_realtime";
+  return process.env.ELEVENLABS_STT_MODEL_ID?.trim() || "scribe_v2";
 }
 
 export function elevenLabsHeaders(apiKey: string): HeadersInit {
