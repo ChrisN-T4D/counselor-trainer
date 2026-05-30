@@ -3,6 +3,7 @@ import { z } from "zod";
 import { auth } from "@/auth";
 import { createLlmProvider } from "@/lib/llm/factory";
 import { classifyLlmError } from "@/lib/llm/errors";
+import { isSuspiciousClientReply } from "@/lib/llm/message-content";
 import { db } from "@/lib/db";
 import {
   parseStoredRelationshipState,
@@ -13,12 +14,27 @@ import {
   buildConversationMessagesWithContext,
   buildSessionContext,
 } from "@/lib/sessions/prompts";
+import type { ChatMessage } from "@/lib/llm/provider";
+import { CLIENT_DELIVERY_PROMPT } from "@/lib/voice/delivery-tags";
 
 const turnSchema = z.object({
   content: z.string().min(1).max(4000),
 });
 
 type RouteParams = { params: Promise<{ sessionId: string }> };
+
+function buildLegacyTranscriptMessages(
+  systemPrompt: string,
+  transcript: { role: "CLIENT" | "THERAPIST"; content: string }[],
+): ChatMessage[] {
+  return [
+    { role: "system", content: systemPrompt },
+    ...transcript.map((turn) => ({
+      role: (turn.role === "THERAPIST" ? "user" : "assistant") as "user" | "assistant",
+      content: turn.content,
+    })),
+  ];
+}
 
 export async function POST(request: Request, { params }: RouteParams) {
   const session = await auth();
@@ -70,7 +86,7 @@ export async function POST(request: Request, { params }: RouteParams) {
     { role: "THERAPIST" as const, content: therapistMessage.content },
   ];
 
-  let clientReply: string;
+  let llmMessages: ChatMessage[];
 
   try {
     if (practiceSession.clientCase) {
@@ -109,42 +125,76 @@ export async function POST(request: Request, { params }: RouteParams) {
         })),
         sessionNumber: practiceSession.sessionNumber,
         latestTherapistMessage: therapistMessage.content,
+        skipVectorSearch: true,
       });
 
-      const llm = createLlmProvider();
-      clientReply = await llm.complete(
-        buildConversationMessagesWithContext(context, transcript),
-      );
+      llmMessages = buildConversationMessagesWithContext(context, transcript);
     } else {
-      const llm = createLlmProvider();
-      clientReply = await llm.complete([
-        {
-          role: "system",
-          content: `You are role-playing as a client. Scenario: ${practiceSession.scenario.title}. ${practiceSession.scenario.systemPrompt}`,
-        },
-        ...transcript.map((turn) => ({
-          role: (turn.role === "THERAPIST" ? "user" : "assistant") as "user" | "assistant",
-          content: turn.content,
-        })),
-      ]);
+      llmMessages = buildLegacyTranscriptMessages(
+        `You are role-playing as a client. Scenario: ${practiceSession.scenario.title}. ${practiceSession.scenario.systemPrompt}
+
+${CLIENT_DELIVERY_PROMPT}`,
+        transcript,
+      );
     }
   } catch (error) {
-    console.error("LLM turn error:", error);
-    const classified = classifyLlmError(error);
-    return NextResponse.json({ error: classified.message, code: classified.code }, { status: classified.status });
+    console.error("Session context error:", error);
+    return NextResponse.json({ error: "Failed to prepare session context" }, { status: 500 });
   }
 
-  const clientMessage = await db.message.create({
-    data: {
-      sessionId,
-      role: "CLIENT",
-      content: clientReply,
-      sequence: nextSequence + 1,
+  const encoder = new TextEncoder();
+  const llm = createLlmProvider();
+
+  const stream = new ReadableStream({
+    async start(controller) {
+      const write = (payload: Record<string, unknown>) => {
+        controller.enqueue(encoder.encode(`${JSON.stringify(payload)}\n`));
+      };
+
+      write({ type: "therapist", message: therapistMessage });
+
+      let clientReply = "";
+
+      try {
+        for await (const delta of llm.stream(llmMessages)) {
+          clientReply += delta;
+          write({ type: "delta", content: delta });
+        }
+
+        const trimmed = clientReply.trim();
+        if (!trimmed) {
+          throw new Error("LLM returned an empty response");
+        }
+        if (isSuspiciousClientReply(trimmed)) {
+          throw new Error(
+            `LLM returned an unusably short reply (${JSON.stringify(trimmed)}). Try raising OPENAI_CHAT_MAX_TOKENS.`,
+          );
+        }
+
+        const clientMessage = await db.message.create({
+          data: {
+            sessionId,
+            role: "CLIENT",
+            content: trimmed,
+            sequence: nextSequence + 1,
+          },
+        });
+
+        write({ type: "done", clientMessage });
+      } catch (error) {
+        console.error("LLM turn error:", error);
+        const classified = classifyLlmError(error);
+        write({ type: "error", error: classified.message, code: classified.code });
+      } finally {
+        controller.close();
+      }
     },
   });
 
-  return NextResponse.json({
-    therapistMessage,
-    clientMessage,
+  return new Response(stream, {
+    headers: {
+      "Content-Type": "application/x-ndjson",
+      "Cache-Control": "no-cache, no-transform",
+    },
   });
 }

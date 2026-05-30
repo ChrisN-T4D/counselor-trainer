@@ -6,6 +6,8 @@ import {
   getScenarioModel,
 } from "@/lib/llm/config";
 import type { LlmProvider } from "@/lib/llm/provider";
+import type { ClientGender } from "@/lib/voice/voice-catalog";
+import { selectClientVoiceId } from "@/lib/voice/voice-catalog";
 
 export const scenarioGenerationInputSchema = z.object({
   contextType: z.enum([
@@ -35,6 +37,7 @@ export const generatedScenarioSchema = z.object({
   systemPrompt: z.string().min(80).max(2000),
   objectives: z.array(z.string().min(8).max(200)).min(3).max(5),
   difficulty: z.string().min(1),
+  clientGender: z.enum(["female", "male", "neutral"]),
   caseWriteup: z.object({
     identifyingSnapshot: z.string().min(20),
     presentingConcerns: z.string().min(20),
@@ -49,6 +52,10 @@ export const generatedScenarioSchema = z.object({
 });
 
 export type GeneratedScenario = z.infer<typeof generatedScenarioSchema>;
+
+export type GeneratedScenarioWithVoice = GeneratedScenario & {
+  clientVoiceId: string;
+};
 
 function contextLabel(contextType: ScenarioContextType) {
   return contextType
@@ -81,6 +88,7 @@ Output JSON schema:
   "systemPrompt": string,
   "objectives": string[],
   "difficulty": "${input.difficulty}",
+  "clientGender": "female" | "male" | "neutral",
   "caseWriteup": {
     "identifyingSnapshot": string,
     "presentingConcerns": string,
@@ -99,6 +107,7 @@ Rules:
 - Case details must be realistic and internally consistent.
 - Avoid definitive diagnosis language; use training-oriented conceptualization.
 - Make systemPrompt role-play ready for the client perspective in first person (under 400 words).
+- Set clientGender to match the primary client in identifyingSnapshot (female, male, or neutral if unclear).
 - Objectives: 3 concrete counseling skills (one short sentence each).
 - Keep each caseWriteup field to 2-3 sentences (roughly 40-120 characters each). Be concise.`;
 }
@@ -125,7 +134,7 @@ function parseLlmJson(content: string): unknown {
 export async function generateScenarioFromSettings(
   llm: LlmProvider,
   input: ScenarioGenerationInput,
-): Promise<GeneratedScenario> {
+): Promise<GeneratedScenarioWithVoice> {
   const prompt = buildGenerationPrompt(input);
   const raw = await llm.complete(
     [
@@ -142,6 +151,7 @@ export async function generateScenarioFromSettings(
     {
       model: getScenarioModel(),
       maxTokens: getScenarioMaxTokens(),
+      generation: true,
       timeoutMs: getScenarioGenerationTimeoutMs(),
       jsonMode: true,
       temperature: 0.6,
@@ -149,5 +159,11 @@ export async function generateScenarioFromSettings(
   );
 
   const parsed = parseLlmJson(raw);
-  return generatedScenarioSchema.parse(parsed);
+  const scenario = generatedScenarioSchema.parse(parsed);
+  const clientVoiceId = selectClientVoiceId({
+    ageGroup: input.ageGroup,
+    gender: scenario.clientGender as ClientGender,
+  });
+
+  return { ...scenario, clientVoiceId };
 }

@@ -1,3 +1,5 @@
+import { elevenLabsStt } from "./elevenlabs-stt";
+import { elevenLabsTts } from "./elevenlabs-tts";
 import { noopStt, noopTts } from "./noop";
 import type { SttProvider } from "./stt-provider";
 import type { TtsProvider } from "./tts-provider";
@@ -9,7 +11,7 @@ export function createTtsProvider(): TtsProvider {
     case "noop":
       return noopTts;
     case "elevenlabs":
-      throw new Error("ElevenLabs TTS is planned for Phase 2");
+      return elevenLabsTts;
     case "azure":
       throw new Error("Azure Speech TTS is planned for production migration");
     default:
@@ -24,7 +26,7 @@ export function createSttProvider(): SttProvider {
     case "noop":
       return noopStt;
     case "elevenlabs":
-      throw new Error("ElevenLabs STT is planned for Phase 2");
+      return elevenLabsStt;
     case "azure":
       throw new Error("Azure Speech STT is planned for production migration");
     case "browser":

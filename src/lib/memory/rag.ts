@@ -115,6 +115,7 @@ export async function retrieveRelevantMemory(
   clientCaseId: string,
   queryText: string,
   topK = Number(process.env.MEMORY_RAG_TOP_K ?? 6),
+  options?: { skipVectorSearch?: boolean },
 ): Promise<RetrievedChunk[]> {
   const caseWriteupChunks = await db.memoryChunk.findMany({
     where: { clientCaseId, sourceType: "CASE_WRITEUP" },
@@ -122,7 +123,8 @@ export async function retrieveRelevantMemory(
   });
 
   let ranked: RetrievedChunk[] = [];
-  const hasVectors = await clientCaseHasVectorChunks(clientCaseId);
+  const hasVectors =
+    !options?.skipVectorSearch && (await clientCaseHasVectorChunks(clientCaseId));
 
   if (hasVectors) {
     try {
@@ -183,7 +185,7 @@ export function formatRetrievedMemory(chunks: RetrievedChunk[]): string {
     return "No additional retrieved memory.";
   }
 
-  const maxChars = Number(process.env.MEMORY_RAG_MAX_CHARS ?? 4000);
+  const maxChars = Number(process.env.MEMORY_RAG_MAX_CHARS ?? 8000);
   let used = 0;
   const lines: string[] = [];
 

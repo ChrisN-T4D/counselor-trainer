@@ -29,6 +29,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ text });
   } catch (error) {
     console.error("STT error:", error);
-    return NextResponse.json({ error: "STT provider error" }, { status: 502 });
+    const message = error instanceof Error ? error.message : "STT provider error";
+    return NextResponse.json({ error: message }, { status: 502 });
   }
 }

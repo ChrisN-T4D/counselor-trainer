@@ -55,9 +55,27 @@ export function getLlmTimeoutMs(): number {
   return Number.isFinite(value) && value > 0 ? value : 180_000;
 }
 
+/** Output token budget for in-session client replies (not the input context window). */
 export function getChatMaxTokens(): number {
-  const value = Number(process.env.OPENAI_MAX_TOKENS ?? 8192);
-  return Number.isFinite(value) && value > 256 ? value : 8192;
+  const chat = Number(process.env.OPENAI_CHAT_MAX_TOKENS);
+  if (Number.isFinite(chat) && chat > 256) {
+    return chat;
+  }
+  const legacy = Number(process.env.OPENAI_MAX_TOKENS ?? 2048);
+  return Number.isFinite(legacy) && legacy > 256 ? legacy : 2048;
+}
+
+export function getChatRetryMaxTokens(): number {
+  return Math.min(Math.max(getChatMaxTokens() * 2, 2048), 4096);
+}
+
+/** Ollama `think: false` on chat turns. Off by default — some Qwen builds return empty content with it. */
+export function shouldDisableReasoningForChat(model: string): boolean {
+  const flag = process.env.OPENAI_DISABLE_REASONING?.trim().toLowerCase();
+  if (flag === "true" || flag === "1" || flag === "yes") {
+    return /qwen3/i.test(model);
+  }
+  return false;
 }
 
 export function getScenarioGenerationTimeoutMs(): number {

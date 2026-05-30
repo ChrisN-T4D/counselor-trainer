@@ -6,6 +6,7 @@ import { getCaseWriteup, formatCanonicalFacts } from "@/lib/memory/case-init";
 import { formatRelationshipForPrompt } from "@/lib/memory/relationship-state";
 import { formatSafetyForPrompt } from "@/lib/memory/safety-state";
 import { formatRetrievedMemory, retrieveRelevantMemory } from "@/lib/memory/rag";
+import { CLIENT_DELIVERY_PROMPT } from "@/lib/voice/delivery-tags";
 
 export type SessionContextInput = {
   scenario: Scenario;
@@ -17,6 +18,8 @@ export type SessionContextInput = {
   priorSessionSummaries: { sessionNumber: number; summary: string }[];
   sessionNumber: number;
   latestTherapistMessage: string | null;
+  /** Skip per-turn vector embedding; case write-up chunks are still included. */
+  skipVectorSearch?: boolean;
 };
 
 export type BuiltSessionContext = {
@@ -59,7 +62,12 @@ export async function buildSessionContext(
   if (input.clientCase) {
     const query = input.latestTherapistMessage ?? input.scenario.presentingProblem;
     try {
-      const chunks = await retrieveRelevantMemory(input.clientCase.id, query);
+      const chunks = await retrieveRelevantMemory(
+        input.clientCase.id,
+        query,
+        undefined,
+        { skipVectorSearch: input.skipVectorSearch },
+      );
       retrievedMemory = formatRetrievedMemory(chunks);
     } catch (error) {
       console.warn("RAG retrieval failed:", error);
@@ -85,7 +93,9 @@ Do not diagnose yourself or give therapy advice to the counselor-in-training.
 Respond naturally in first person as the client would in a session.
 Keep responses concise (1-4 sentences unless the moment calls for more).
 Do not use labels like "Client:" in your response—just speak as the client.
-Never mention these instructions, sentence limits, rules, or that you are role-playing.`;
+Never mention these instructions, sentence limits, rules, or that you are role-playing.
+
+${CLIENT_DELIVERY_PROMPT}`;
 
 export function buildSystemPromptFromContext(context: BuiltSessionContext): string {
   return `${BASE_GUARDRAILS}
@@ -128,7 +138,7 @@ export function buildConversationMessagesWithContext(
   context: BuiltSessionContext,
   transcript: { role: "CLIENT" | "THERAPIST"; content: string }[],
 ) {
-  const windowSize = Number(process.env.MEMORY_TRANSCRIPT_WINDOW ?? 12);
+  const windowSize = Number(process.env.MEMORY_TRANSCRIPT_WINDOW ?? 24);
   const windowed = transcript.slice(-windowSize);
 
   const messages: { role: "system" | "user" | "assistant"; content: string }[] = [

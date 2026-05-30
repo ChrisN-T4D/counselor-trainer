@@ -32,12 +32,19 @@ export function isReasoningModel(model: string): boolean {
 
 export function reasoningModelHint(model: string): string | null {
   if (isReasoningModel(model)) {
-    return "Qwen 3.x models need OPENAI_MAX_TOKENS=8192 or higher so reasoning does not consume the entire reply budget.";
+    return "Qwen 3.x uses OPENAI_REASONING_MODE=auto to append /no_think on simple chat turns. Set OPENAI_REASONING_MODE=off to always skip thinking.";
   }
   return null;
 }
 
-export function resolveModelMaxTokens(model: string, requested?: number): number {
+export function resolveChatMaxTokens(model: string, requested?: number): number {
+  const configured = requested ?? Number(process.env.OPENAI_CHAT_MAX_TOKENS ?? process.env.OPENAI_MAX_TOKENS ?? 2048);
+  const base = Number.isFinite(configured) && configured > 256 ? configured : 2048;
+  return base;
+}
+
+/** Long-form generation (scenarios, consolidation) — keeps higher floor for reasoning models. */
+export function resolveGenerationMaxTokens(model: string, requested?: number): number {
   const configured = requested ?? Number(process.env.OPENAI_MAX_TOKENS ?? 8192);
   const base = Number.isFinite(configured) && configured > 256 ? configured : 8192;
   if (isReasoningModel(model)) {

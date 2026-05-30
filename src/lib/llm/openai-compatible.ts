@@ -1,10 +1,11 @@
 import OpenAI from "openai";
 import {
-  getChatMaxTokens,
+  getChatRetryMaxTokens,
   getLlmConfigIssues,
   getLlmTimeoutMs,
   llmConfigErrorMessage,
   normalizeOpenAiBaseUrl,
+  shouldDisableReasoningForChat,
 } from "@/lib/llm/config";
 import { LlmConfigError, LlmResponseError } from "@/lib/llm/errors";
 import {
@@ -12,8 +13,12 @@ import {
   isLikelyReasoningOnlyResponse,
   isSuspiciousClientReply,
   reasoningModelHint,
-  resolveModelMaxTokens,
+  resolveChatMaxTokens,
+  resolveGenerationMaxTokens,
 } from "@/lib/llm/message-content";
+import {
+  prepareChatMessages,
+} from "@/lib/llm/reasoning-mode";
 import type { ChatMessage, CompleteOptions, LlmProvider } from "./provider";
 
 function assertLlmConfigured() {
@@ -34,6 +39,41 @@ function createClient(timeoutMs: number) {
   });
 }
 
+function resolveMaxTokens(model: string, options?: CompleteOptions): number {
+  if (options?.generation) {
+    return resolveGenerationMaxTokens(model, options.maxTokens);
+  }
+  if (options?.maxTokens != null) {
+    return options.maxTokens;
+  }
+  return resolveChatMaxTokens(model);
+}
+
+type ChatParams = OpenAI.Chat.Completions.ChatCompletionCreateParams & {
+  think?: boolean;
+};
+
+function buildChatParams(
+  model: string,
+  messages: ChatMessage[],
+  maxTokens: number,
+  options?: CompleteOptions,
+  streaming = false,
+): ChatParams {
+  const temperature = options?.temperature ?? 0.7;
+  const jsonMode = options?.jsonMode ?? false;
+
+  return {
+    model,
+    messages,
+    temperature,
+    max_tokens: maxTokens,
+    stream: streaming,
+    ...(jsonMode ? { response_format: { type: "json_object" as const } } : {}),
+    ...(shouldDisableReasoningForChat(model) ? { think: false } : {}),
+  };
+}
+
 async function runCompletion(
   client: OpenAI,
   params: OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming,
@@ -47,7 +87,7 @@ async function runCompletion(
       const hint = reasoningModelHint(String(params.model));
       throw new LlmResponseError(
         hint ??
-          "Model returned reasoning output but no speakable content. Increase OPENAI_MAX_TOKENS.",
+          "Model returned reasoning output but no speakable content. Increase OPENAI_CHAT_MAX_TOKENS.",
       );
     }
     throw new LlmResponseError("LLM returned an empty response");
@@ -55,7 +95,7 @@ async function runCompletion(
 
   if (isSuspiciousClientReply(content)) {
     throw new LlmResponseError(
-      `LLM returned an unusably short reply (${JSON.stringify(content)}). Increase OPENAI_MAX_TOKENS for reasoning models.`,
+      `LLM returned an unusably short reply (${JSON.stringify(content)}). Increase OPENAI_CHAT_MAX_TOKENS.`,
     );
   }
 
@@ -71,25 +111,19 @@ export function createOpenAiCompatibleLlm(): LlmProvider {
       const timeoutMs = options?.timeoutMs ?? getLlmTimeoutMs();
       const client = createClient(timeoutMs);
       const useJsonMode = options?.jsonMode ?? false;
-      const temperature = options?.temperature ?? 0.7;
 
-      const buildParams = (
-        maxTokens: number,
-        jsonMode: boolean,
-      ): OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming => ({
-        model,
-        messages,
-        temperature,
-        max_tokens: maxTokens,
-        ...(jsonMode ? { response_format: { type: "json_object" as const } } : {}),
-      });
+      let maxTokens = resolveMaxTokens(model, options);
+      const retryTokens = options?.generation
+        ? Math.min(Math.max(maxTokens * 2, 8192), 16384)
+        : getChatRetryMaxTokens();
 
-      let maxTokens = resolveModelMaxTokens(model, options?.maxTokens ?? getChatMaxTokens());
+      const preparedMessages = prepareChatMessages(model, messages, options);
 
       const attempt = async (jsonMode: boolean, tokens: number) =>
-        runCompletion(client, buildParams(tokens, jsonMode));
-
-      const retryTokens = Math.min(Math.max(maxTokens * 2, 8192), 16384);
+        runCompletion(
+          client,
+          buildChatParams(model, preparedMessages, tokens, { ...options, jsonMode }, false) as OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming,
+        );
 
       if (useJsonMode) {
         try {
@@ -123,15 +157,16 @@ export function createOpenAiCompatibleLlm(): LlmProvider {
       }
     },
 
-    async *stream(messages: ChatMessage[]) {
-      const client = createClient(getLlmTimeoutMs());
-      const stream = await client.chat.completions.create({
-        model: defaultModel,
-        messages,
-        temperature: 0.8,
-        max_tokens: resolveModelMaxTokens(defaultModel, getChatMaxTokens()),
-        stream: true,
-      });
+    async *stream(messages: ChatMessage[], options?: CompleteOptions) {
+      const model = options?.model ?? defaultModel;
+      const timeoutMs = options?.timeoutMs ?? getLlmTimeoutMs();
+      const client = createClient(timeoutMs);
+      const preparedMessages = prepareChatMessages(model, messages, options);
+      const maxTokens = resolveMaxTokens(model, options);
+
+      const stream = await client.chat.completions.create(
+        buildChatParams(model, preparedMessages, maxTokens, options, true) as OpenAI.Chat.Completions.ChatCompletionCreateParamsStreaming,
+      );
 
       for await (const chunk of stream) {
         const delta = chunk.choices[0]?.delta?.content;

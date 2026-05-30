@@ -94,6 +94,7 @@ export async function POST(request: Request) {
       sessionParticipants: parsedInput.data.participants,
       generationSettings: parsedInput.data,
       caseWriteup: generated.caseWriteup,
+      clientVoiceId: generated.clientVoiceId,
       isTemplate: false,
     },
     select: PUBLIC_SCENARIO_SELECT,

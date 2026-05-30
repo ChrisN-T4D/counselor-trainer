@@ -6,6 +6,7 @@ import {
   BIOPSYCHOSOCIAL_SECTIONS,
   type BiopsychosocialWriteup,
 } from "@/lib/scenarios/case-writeup";
+import { ClientTranscriptContent } from "@/components/review/client-transcript-content";
 
 type Message = {
   id: string;
@@ -208,6 +209,9 @@ export function SessionReviewPanel({ sessionId }: { sessionId: string }) {
 
       <section className="rounded-lg border border-slate-200 bg-white p-5">
         <h2 className="text-lg font-semibold text-slate-900">Session transcript</h2>
+        <p className="mt-1 text-sm text-slate-600">
+          Client delivery cues (pauses, tone shifts) appear as highlighted tags in review only.
+        </p>
         <div className="mt-4 space-y-3">
           {data.session.messages.map((message) => (
             <div
@@ -221,7 +225,11 @@ export function SessionReviewPanel({ sessionId }: { sessionId: string }) {
               <p className="mb-1 text-xs font-medium opacity-70">
                 {message.role === "THERAPIST" ? "You (Therapist)" : "Client"}
               </p>
-              <p className="whitespace-pre-wrap">{message.content}</p>
+              {message.role === "CLIENT" ? (
+                <ClientTranscriptContent content={message.content} />
+              ) : (
+                <p className="whitespace-pre-wrap">{message.content}</p>
+              )}
             </div>
           ))}
         </div>

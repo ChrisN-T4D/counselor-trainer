@@ -85,6 +85,7 @@ model Scenario {
   referralSource      String?
   sessionParticipants String[]
   generationSettings  Json?
+  clientVoiceId       String?
   isTemplate          Boolean             @default(false)
   sessions            Session[]
   clientCases         ClientCase[]

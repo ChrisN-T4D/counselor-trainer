@@ -73,7 +73,7 @@ export async function checkLlmHealth(): Promise<LlmHealthResult> {
       issues: [],
       error: message,
       hint: model?.includes("qwen3")
-        ? "Qwen 3.x models can be slow and need higher OPENAI_MAX_TOKENS (4096+)."
+        ? "Qwen 3.x: OPENAI_REASONING_MODE=auto appends /no_think on simple chat turns for faster replies."
         : null,
     };
   }
