@@ -1,9 +1,9 @@
 "use client";
 
-import { FormEvent, useEffect, useRef, useState } from "react";
+import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { usePracticeVoice } from "@/components/practice/use-practice-voice";
-import { ListeningModePanel } from "@/components/practice/listening-mode-panel";
+import { ListeningModePanel, ListeningModeStatusBar } from "@/components/practice/listening-mode-panel";
 import { formatClientTextForDisplay } from "@/lib/voice/delivery-tags";
 
 type Message = {
@@ -72,6 +72,7 @@ export function PracticeChat({ sessionId }: { sessionId: string }) {
   const [streamingClientText, setStreamingClientText] = useState<string | null>(null);
   const [streamingMessageId, setStreamingMessageId] = useState<string | null>(null);
   const [ending, setEnding] = useState(false);
+  const handsFreeStartedRef = useRef(false);
 
   const {
     voiceStatus,
@@ -83,10 +84,19 @@ export function PracticeChat({ sessionId }: { sessionId: string }) {
     audioOutputModeHint,
     setAudioOutputMode,
     recording,
+    listening,
     transcribing,
+    handsFreeActive,
+    clientSpeaking,
+    micPaused,
     playClientMessage,
     setSessionActive,
     toggleBatchMic,
+    interruptClient,
+    setOnAutoSend,
+    beginHandsFreeTurn,
+    pauseHandsFreeForSend,
+    resumeHandsFreeAfterSend,
   } = usePracticeVoice(sessionId);
 
   useEffect(() => {
@@ -114,6 +124,160 @@ export function PracticeChat({ sessionId }: { sessionId: string }) {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [practiceSession?.messages.length, sending, streamingClientText]);
 
+  const sendMessage = useCallback(
+    async (messageText: string) => {
+      if (!messageText.trim() || sending || practiceSession?.status !== "ACTIVE") {
+        return;
+      }
+
+      pauseHandsFreeForSend();
+      setSending(true);
+      setError(null);
+      setVoiceError(null);
+      setStreamingClientText("");
+      setStreamingMessageId("streaming");
+      setInput("");
+
+      const response = await fetch(`/api/sessions/${sessionId}/turn`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ content: messageText.trim() }),
+      });
+
+      if (!response.ok) {
+        const data = (await response.json().catch(() => ({}))) as { error?: string };
+        setError(data.error ?? "Failed to send message");
+        setStreamingClientText(null);
+        setStreamingMessageId(null);
+        setSending(false);
+        resumeHandsFreeAfterSend();
+        return;
+      }
+
+      if (!response.body) {
+        setError("No response stream from server");
+        setStreamingClientText(null);
+        setStreamingMessageId(null);
+        setSending(false);
+        resumeHandsFreeAfterSend();
+        return;
+      }
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      let therapistMessage: Message | null = null;
+      let clientMessage: Message | null = null;
+      let accumulated = "";
+
+      try {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) {
+            break;
+          }
+
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split("\n");
+          buffer = lines.pop() ?? "";
+
+          for (const line of lines) {
+            if (!line.trim()) {
+              continue;
+            }
+
+            const event = JSON.parse(line) as StreamEvent;
+
+            if (event.type === "therapist") {
+              therapistMessage = event.message;
+              setPracticeSession((current) =>
+                current
+                  ? { ...current, messages: [...current.messages, event.message] }
+                  : current,
+              );
+            } else if (event.type === "delta") {
+              accumulated += event.content;
+              setStreamingClientText(accumulated);
+            } else if (event.type === "done") {
+              clientMessage = event.clientMessage;
+            } else if (event.type === "error") {
+              throw new Error(event.error);
+            }
+          }
+        }
+
+        if (clientMessage) {
+          setPracticeSession((current) =>
+            current
+              ? { ...current, messages: [...current.messages, clientMessage!] }
+              : current,
+          );
+
+          if (voiceStatus.ttsEnabled) {
+            void playClientMessage(clientMessage.id, clientMessage.content);
+          } else {
+            resumeHandsFreeAfterSend();
+          }
+        } else if (!therapistMessage) {
+          throw new Error("Session turn did not complete");
+        } else {
+          throw new Error("Client reply did not finish streaming");
+        }
+      } catch (streamError) {
+        setError(streamError instanceof Error ? streamError.message : "Failed to send message");
+        resumeHandsFreeAfterSend();
+      } finally {
+        setStreamingClientText(null);
+        setStreamingMessageId(null);
+        setSending(false);
+      }
+    },
+    [
+      pauseHandsFreeForSend,
+      playClientMessage,
+      practiceSession?.status,
+      resumeHandsFreeAfterSend,
+      sending,
+      sessionId,
+      setVoiceError,
+      voiceStatus.ttsEnabled,
+    ],
+  );
+
+  useEffect(() => {
+    setOnAutoSend((text) => sendMessage(text));
+    return () => setOnAutoSend(null);
+  }, [sendMessage, setOnAutoSend]);
+
+  useEffect(() => {
+    if (
+      loading ||
+      !practiceSession ||
+      practiceSession.status !== "ACTIVE" ||
+      !handsFreeActive ||
+      handsFreeStartedRef.current
+    ) {
+      return;
+    }
+
+    handsFreeStartedRef.current = true;
+    const lastMessage = practiceSession.messages.at(-1);
+
+    if (lastMessage?.role === "CLIENT" && voiceStatus.ttsEnabled) {
+      void playClientMessage(lastMessage.id, lastMessage.content);
+      return;
+    }
+
+    beginHandsFreeTurn();
+  }, [
+    beginHandsFreeTurn,
+    handsFreeActive,
+    loading,
+    playClientMessage,
+    practiceSession,
+    voiceStatus.ttsEnabled,
+  ]);
+
   async function handleBatchMicToggle() {
     const text = await toggleBatchMic();
     if (text) {
@@ -124,106 +288,10 @@ export function PracticeChat({ sessionId }: { sessionId: string }) {
 
   async function handleSend(event: FormEvent) {
     event.preventDefault();
-    if (!input.trim() || sending || practiceSession?.status !== "ACTIVE") {
+    if (!input.trim()) {
       return;
     }
-
-    const messageText = input.trim();
-    setSending(true);
-    setError(null);
-    setVoiceError(null);
-    setStreamingClientText("");
-    setStreamingMessageId("streaming");
-    setInput("");
-
-    const response = await fetch(`/api/sessions/${sessionId}/turn`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ content: messageText }),
-    });
-
-    if (!response.ok) {
-      const data = (await response.json().catch(() => ({}))) as { error?: string };
-      setError(data.error ?? "Failed to send message");
-      setStreamingClientText(null);
-      setStreamingMessageId(null);
-      setSending(false);
-      return;
-    }
-
-    if (!response.body) {
-      setError("No response stream from server");
-      setStreamingClientText(null);
-      setStreamingMessageId(null);
-      setSending(false);
-      return;
-    }
-
-    const reader = response.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = "";
-    let therapistMessage: Message | null = null;
-    let clientMessage: Message | null = null;
-    let accumulated = "";
-
-    try {
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) {
-          break;
-        }
-
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split("\n");
-        buffer = lines.pop() ?? "";
-
-        for (const line of lines) {
-          if (!line.trim()) {
-            continue;
-          }
-
-          const event = JSON.parse(line) as StreamEvent;
-
-          if (event.type === "therapist") {
-            therapistMessage = event.message;
-            setPracticeSession((current) =>
-              current
-                ? { ...current, messages: [...current.messages, event.message] }
-                : current,
-            );
-          } else if (event.type === "delta") {
-            accumulated += event.content;
-            setStreamingClientText(accumulated);
-          } else if (event.type === "done") {
-            clientMessage = event.clientMessage;
-          } else if (event.type === "error") {
-            throw new Error(event.error);
-          }
-        }
-      }
-
-      if (clientMessage) {
-        setPracticeSession((current) =>
-          current
-            ? { ...current, messages: [...current.messages, clientMessage!] }
-            : current,
-        );
-
-        if (voiceStatus.ttsEnabled) {
-          void playClientMessage(clientMessage.id, clientMessage.content);
-        }
-      } else if (!therapistMessage) {
-        throw new Error("Session turn did not complete");
-      } else {
-        throw new Error("Client reply did not finish streaming");
-      }
-    } catch (streamError) {
-      setError(streamError instanceof Error ? streamError.message : "Failed to send message");
-    } finally {
-      setStreamingClientText(null);
-      setStreamingMessageId(null);
-      setSending(false);
-    }
+    await sendMessage(input.trim());
   }
 
   async function handleEndSession() {
@@ -286,9 +354,14 @@ export function PracticeChat({ sessionId }: { sessionId: string }) {
   }
 
   const displayError = error ?? voiceError;
-  const voiceBusy = recording || transcribing;
+  const voiceBusy = recording || transcribing || listening;
   const showAudioSetup =
     practiceSession.status === "ACTIVE" && (voiceStatus.ttsEnabled || voiceStatus.sttEnabled);
+  const inputPlaceholder = handsFreeActive
+    ? "Type a response instead, or just speak when the mic is live…"
+    : voiceStatus.sttEnabled
+      ? "Type your response, or click the mic to record…"
+      : "Respond as the therapist...";
 
   return (
     <div className="flex flex-col gap-4">
@@ -362,21 +435,26 @@ export function PracticeChat({ sessionId }: { sessionId: string }) {
 
       {practiceSession.status === "ACTIVE" ? (
         <form onSubmit={handleSend} className="flex flex-col gap-3">
+          {handsFreeActive && !sending && !transcribing && (
+            <ListeningModeStatusBar
+              mode={audioOutputMode}
+              listening={listening || recording}
+              clientSpeaking={clientSpeaking}
+              micMuted={micPaused}
+              onInterrupt={interruptClient}
+            />
+          )}
           <div className="relative">
             <textarea
               ref={textareaRef}
               value={input}
               onChange={(event) => setInput(event.target.value)}
-              placeholder={
-                voiceStatus.sttEnabled
-                  ? "Type your response, or click the mic to record…"
-                  : "Respond as the therapist..."
-              }
+              placeholder={inputPlaceholder}
               rows={3}
-              className="field-input pr-12"
+              className={`field-input ${voiceStatus.sttEnabled && !handsFreeActive ? "pr-12" : ""}`}
               disabled={sending || transcribing || recording}
             />
-            {voiceStatus.sttEnabled && (
+            {voiceStatus.sttEnabled && !handsFreeActive && (
               <button
                 type="button"
                 onClick={() => void handleBatchMicToggle()}
@@ -393,11 +471,20 @@ export function PracticeChat({ sessionId }: { sessionId: string }) {
               </button>
             )}
           </div>
-          {recording && (
+          {handsFreeActive && listening && !recording && !transcribing && !sending && (
+            <p className="text-sm text-emerald-700">Listening… speak when you&apos;re ready.</p>
+          )}
+          {handsFreeActive && recording && (
+            <p className="text-sm text-red-600">Recording… pause briefly when you&apos;re done.</p>
+          )}
+          {!handsFreeActive && recording && (
             <p className="text-sm text-red-600">Recording… click the mic again to stop and transcribe.</p>
           )}
           {transcribing && (
             <p className="text-sm text-slate-600">Transcribing your response…</p>
+          )}
+          {sending && (
+            <p className="text-sm text-slate-600">Sending your response…</p>
           )}
           <div className="flex gap-3">
             <button

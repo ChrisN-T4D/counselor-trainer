@@ -27,13 +27,13 @@ export const AUDIO_OUTPUT_MODE_DETAILS: Record<AudioOutputMode, AudioOutputModeD
   },
   speakers: {
     label: "Speakers",
-    micWhileClientSilent: "Your mic stays open.",
-    micWhileClientSpeaking: "Your mic pauses automatically so the client is not transcribed as you.",
+    micWhileClientSilent: "Your mic opens automatically — just speak when you're ready.",
+    micWhileClientSpeaking: "Your mic pauses while the client speaks so their voice isn't transcribed as yours.",
     howToInterrupt:
-      "While the client is speaking, click Interrupt client or the mic button — your mic does not hear you until you do.",
+      "Click Interrupt client while they are speaking, or wait for them to finish — your mic opens automatically.",
     bestFor: "Laptop speakers, desk monitors, or any setup where client audio plays out loud.",
     speakersReminder:
-      "On speakers, your mic pauses while the client talks. To jump in, click Interrupt client or the mic button — it will not pick up your voice on its own.",
+      "On speakers, your mic pauses while the client talks, then reopens when they finish. Speak naturally — we detect when you're done and send your response automatically.",
   },
 };
 

@@ -9,6 +9,7 @@ import {
   resolveDefaultAudioOutputMode,
   saveAudioOutputMode,
 } from "@/lib/voice/audio-output-mode";
+import { monitorVoiceActivity } from "@/lib/voice/voice-activity";
 
 type VoiceStatus = {
   ttsEnabled: boolean;
@@ -16,6 +17,9 @@ type VoiceStatus = {
   ttsError?: string;
   sttError?: string;
 };
+
+const POST_TTS_DELAY_MS = 350;
+const MAX_UTTERANCE_MS = 120_000;
 
 export function usePracticeVoice(sessionId: string) {
   const [voiceStatus, setVoiceStatus] = useState<VoiceStatus>({
@@ -27,8 +31,10 @@ export function usePracticeVoice(sessionId: string) {
   const [audioOutputMode, setAudioOutputModeState] = useState<AudioOutputMode>("speakers");
   const [audioOutputModeHint, setAudioOutputModeHint] = useState<AudioOutputModeHint | null>(null);
   const [recording, setRecording] = useState(false);
+  const [listening, setListening] = useState(false);
   const [transcribing, setTranscribing] = useState(false);
   const [voiceError, setVoiceError] = useState<string | null>(null);
+  const [handsFreePaused, setHandsFreePaused] = useState(false);
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const audioUrlRef = useRef<string | null>(null);
@@ -37,6 +43,38 @@ export function usePracticeVoice(sessionId: string) {
   const chunksRef = useRef<Blob[]>([]);
   const transcribeResolverRef = useRef<((text: string | null) => void) | null>(null);
   const audioOutputModeRef = useRef<AudioOutputMode>("speakers");
+  const vadStopRef = useRef<(() => void) | null>(null);
+  const postTtsTimerRef = useRef<number | null>(null);
+  const maxUtteranceTimerRef = useRef<number | null>(null);
+  const sessionActiveRef = useRef(false);
+  const playingMessageIdRef = useRef<string | null>(null);
+  const handsFreePausedRef = useRef(false);
+  const onAutoSendRef = useRef<((text: string) => void | Promise<void>) | null>(null);
+  const voiceStatusRef = useRef(voiceStatus);
+
+  const handsFreeActive =
+    voiceStatus.sttEnabled && audioOutputMode === "speakers";
+  const clientSpeaking = playingMessageId !== null;
+  const micPaused = handsFreeActive && (clientSpeaking || handsFreePaused);
+
+  const clearPostTtsTimer = useCallback(() => {
+    if (postTtsTimerRef.current !== null) {
+      window.clearTimeout(postTtsTimerRef.current);
+      postTtsTimerRef.current = null;
+    }
+  }, []);
+
+  const clearMaxUtteranceTimer = useCallback(() => {
+    if (maxUtteranceTimerRef.current !== null) {
+      window.clearTimeout(maxUtteranceTimerRef.current);
+      maxUtteranceTimerRef.current = null;
+    }
+  }, []);
+
+  const stopVad = useCallback(() => {
+    vadStopRef.current?.();
+    vadStopRef.current = null;
+  }, []);
 
   const stopPlayback = useCallback(() => {
     if (audioRef.current) {
@@ -50,12 +88,37 @@ export function usePracticeVoice(sessionId: string) {
     setPlayingMessageId(null);
   }, []);
 
+  useEffect(() => {
+    playingMessageIdRef.current = playingMessageId;
+  }, [playingMessageId]);
+
+  useEffect(() => {
+    handsFreePausedRef.current = handsFreePaused;
+  }, [handsFreePaused]);
+
   const setAudioOutputMode = useCallback((mode: AudioOutputMode) => {
     audioOutputModeRef.current = mode;
     setAudioOutputModeState(mode);
     setAudioOutputModeHint("saved");
     saveAudioOutputMode(mode);
   }, []);
+
+  const releaseMic = useCallback(() => {
+    stopVad();
+    clearPostTtsTimer();
+    clearMaxUtteranceTimer();
+
+    if (mediaRecorderRef.current?.state !== "inactive") {
+      mediaRecorderRef.current?.stop();
+    }
+    mediaRecorderRef.current = null;
+
+    mediaStreamRef.current?.getTracks().forEach((track) => track.stop());
+    mediaStreamRef.current = null;
+    chunksRef.current = [];
+    setRecording(false);
+    setListening(false);
+  }, [clearMaxUtteranceTimer, clearPostTtsTimer, stopVad]);
 
   const transcribeBlob = useCallback(async (blob: Blob): Promise<string | null> => {
     setTranscribing(true);
@@ -83,18 +146,174 @@ export function usePracticeVoice(sessionId: string) {
     }
   }, []);
 
+  const finishRecorder = useCallback(async () => {
+    const recorder = mediaRecorderRef.current;
+    if (!recorder || recorder.state === "inactive") {
+      return null;
+    }
+
+    return new Promise<string | null>((resolve) => {
+      transcribeResolverRef.current = resolve;
+      recorder.stop();
+    });
+  }, []);
+
+  const ensureMicStream = useCallback(async (): Promise<MediaStream | null> => {
+    if (mediaStreamRef.current?.active) {
+      return mediaStreamRef.current;
+    }
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      mediaStreamRef.current = stream;
+      return stream;
+    } catch (error) {
+      setVoiceError(
+        error instanceof Error ? error.message : "Microphone access was denied or unavailable",
+      );
+      return null;
+    }
+  }, []);
+
+  const startSpeechRecorder = useCallback(async () => {
+    if (mediaRecorderRef.current?.state === "recording") {
+      return;
+    }
+
+    const stream = await ensureMicStream();
+    if (!stream) {
+      return;
+    }
+
+    setVoiceError(null);
+    chunksRef.current = [];
+
+    const mimeType = MediaRecorder.isTypeSupported("audio/webm;codecs=opus")
+      ? "audio/webm;codecs=opus"
+      : "audio/webm";
+
+    const recorder = new MediaRecorder(stream, { mimeType });
+    mediaRecorderRef.current = recorder;
+
+    recorder.ondataavailable = (event) => {
+      if (event.data.size > 0) {
+        chunksRef.current.push(event.data);
+      }
+    };
+
+    recorder.onstop = async () => {
+      clearMaxUtteranceTimer();
+      setRecording(false);
+
+      const blob = new Blob(chunksRef.current, { type: recorder.mimeType || mimeType });
+      chunksRef.current = [];
+      mediaRecorderRef.current = null;
+
+      const text = blob.size > 0 ? await transcribeBlob(blob) : null;
+      transcribeResolverRef.current?.(text);
+      transcribeResolverRef.current = null;
+    };
+
+    recorder.start();
+    setRecording(true);
+
+    clearMaxUtteranceTimer();
+    maxUtteranceTimerRef.current = window.setTimeout(() => {
+      void finishRecorder();
+    }, MAX_UTTERANCE_MS);
+  }, [clearMaxUtteranceTimer, ensureMicStream, finishRecorder, transcribeBlob]);
+
+  const pauseHandsFreeListening = useCallback(() => {
+    stopVad();
+    clearPostTtsTimer();
+    if (mediaRecorderRef.current?.state === "recording") {
+      void finishRecorder();
+    }
+    setListening(false);
+  }, [clearPostTtsTimer, finishRecorder, stopVad]);
+
+  const resumeHandsFreeListening = useCallback(async () => {
+    if (
+      !sessionActiveRef.current ||
+      !voiceStatusRef.current.sttEnabled ||
+      audioOutputModeRef.current !== "speakers" ||
+      handsFreePausedRef.current ||
+      playingMessageIdRef.current !== null
+    ) {
+      return;
+    }
+
+    const stream = await ensureMicStream();
+    if (!stream) {
+      return;
+    }
+
+    stopVad();
+    setListening(true);
+    setVoiceError(null);
+
+    vadStopRef.current = monitorVoiceActivity(stream, {
+      onSpeechStart: () => {
+        void startSpeechRecorder();
+      },
+      onSpeechEnd: () => {
+        void (async () => {
+          const text = await finishRecorder();
+          stopVad();
+          setListening(false);
+
+          if (text) {
+            await onAutoSendRef.current?.(text);
+          } else if (
+            sessionActiveRef.current &&
+            !handsFreePausedRef.current &&
+            audioOutputModeRef.current === "speakers"
+          ) {
+            void resumeHandsFreeListening();
+          }
+        })();
+      },
+    });
+  }, [ensureMicStream, finishRecorder, startSpeechRecorder, stopVad]);
+
+  const scheduleHandsFreeListening = useCallback(() => {
+    if (audioOutputModeRef.current !== "speakers" || !voiceStatusRef.current.sttEnabled) {
+      return;
+    }
+
+    handsFreePausedRef.current = false;
+    setHandsFreePaused(false);
+    clearPostTtsTimer();
+    postTtsTimerRef.current = window.setTimeout(() => {
+      void resumeHandsFreeListening();
+    }, POST_TTS_DELAY_MS);
+  }, [clearPostTtsTimer, resumeHandsFreeListening]);
+
+  const interruptClient = useCallback(() => {
+    stopPlayback();
+    scheduleHandsFreeListening();
+  }, [scheduleHandsFreeListening, stopPlayback]);
+
+  const setOnAutoSend = useCallback((handler: ((text: string) => void | Promise<void>) | null) => {
+    onAutoSendRef.current = handler;
+  }, []);
+
   const setSessionActive = useCallback(
     (active: boolean) => {
+      sessionActiveRef.current = active;
       if (!active) {
         stopPlayback();
-        if (mediaRecorderRef.current?.state !== "inactive") {
-          mediaRecorderRef.current?.stop();
-        }
-        mediaStreamRef.current?.getTracks().forEach((track) => track.stop());
+        handsFreePausedRef.current = true;
+        setHandsFreePaused(true);
+        releaseMic();
       }
     },
-    [stopPlayback],
+    [releaseMic, stopPlayback],
   );
+
+  useEffect(() => {
+    voiceStatusRef.current = voiceStatus;
+  }, [voiceStatus]);
 
   useEffect(() => {
     async function loadVoiceStatus() {
@@ -132,14 +351,28 @@ export function usePracticeVoice(sessionId: string) {
   }, []);
 
   useEffect(() => {
+    if (audioOutputMode !== "speakers") {
+      handsFreePausedRef.current = true;
+      setHandsFreePaused(true);
+      pauseHandsFreeListening();
+      if (mediaStreamRef.current && !recording) {
+        mediaStreamRef.current.getTracks().forEach((track) => track.stop());
+        mediaStreamRef.current = null;
+      }
+      return;
+    }
+
+    if (sessionActiveRef.current && voiceStatusRef.current.sttEnabled && !handsFreePausedRef.current) {
+      scheduleHandsFreeListening();
+    }
+  }, [audioOutputMode, pauseHandsFreeListening, recording, scheduleHandsFreeListening]);
+
+  useEffect(() => {
     return () => {
       stopPlayback();
-      if (mediaRecorderRef.current?.state !== "inactive") {
-        mediaRecorderRef.current?.stop();
-      }
-      mediaStreamRef.current?.getTracks().forEach((track) => track.stop());
+      releaseMic();
     };
-  }, [stopPlayback]);
+  }, [releaseMic, stopPlayback]);
 
   const playClientMessage = useCallback(
     async (messageId: string, text: string) => {
@@ -148,10 +381,11 @@ export function usePracticeVoice(sessionId: string) {
       }
 
       if (playingMessageId === messageId) {
-        stopPlayback();
+        interruptClient();
         return;
       }
 
+      pauseHandsFreeListening();
       stopPlayback();
       setVoiceError(null);
       setLoadingPlayId(messageId);
@@ -178,10 +412,14 @@ export function usePracticeVoice(sessionId: string) {
 
         const audio = new Audio(url);
         audioRef.current = audio;
-        audio.onended = () => stopPlayback();
+        audio.onended = () => {
+          stopPlayback();
+          scheduleHandsFreeListening();
+        };
         audio.onerror = () => {
           setVoiceError("Audio playback failed");
           stopPlayback();
+          scheduleHandsFreeListening();
         };
 
         setPlayingMessageId(messageId);
@@ -189,31 +427,39 @@ export function usePracticeVoice(sessionId: string) {
       } catch (error) {
         stopPlayback();
         setVoiceError(error instanceof Error ? error.message : "Could not play client voice");
+        scheduleHandsFreeListening();
       } finally {
         setLoadingPlayId(null);
       }
     },
-    [playingMessageId, sessionId, stopPlayback, voiceStatus.ttsEnabled],
+    [
+      interruptClient,
+      pauseHandsFreeListening,
+      playingMessageId,
+      scheduleHandsFreeListening,
+      sessionId,
+      stopPlayback,
+      voiceStatus.ttsEnabled,
+    ],
   );
 
   const toggleBatchRecording = useCallback(async (): Promise<string | null> => {
-    if (!voiceStatus.sttEnabled || transcribing) {
+    if (!voiceStatus.sttEnabled || transcribing || handsFreeActive) {
       return null;
     }
 
     if (recording) {
-      return new Promise((resolve) => {
-        transcribeResolverRef.current = resolve;
-        mediaRecorderRef.current?.stop();
-      });
+      return finishRecorder();
     }
 
     setVoiceError(null);
     chunksRef.current = [];
 
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      mediaStreamRef.current = stream;
+      const stream = await ensureMicStream();
+      if (!stream) {
+        return null;
+      }
 
       const mimeType = MediaRecorder.isTypeSupported("audio/webm;codecs=opus")
         ? "audio/webm;codecs=opus"
@@ -250,15 +496,37 @@ export function usePracticeVoice(sessionId: string) {
       );
       return null;
     }
-  }, [recording, transcribing, transcribeBlob, voiceStatus.sttEnabled]);
+  }, [ensureMicStream, finishRecorder, handsFreeActive, recording, transcribing, transcribeBlob, voiceStatus.sttEnabled]);
 
   const toggleBatchMic = useCallback(async (): Promise<string | null> => {
-    if (!voiceStatus.sttEnabled || transcribing) {
+    if (!voiceStatus.sttEnabled || transcribing || handsFreeActive) {
       return null;
     }
 
     return toggleBatchRecording();
-  }, [toggleBatchRecording, transcribing, voiceStatus.sttEnabled]);
+  }, [handsFreeActive, toggleBatchRecording, transcribing, voiceStatus.sttEnabled]);
+
+  const beginHandsFreeTurn = useCallback(() => {
+    if (!handsFreeActive || !sessionActiveRef.current) {
+      return;
+    }
+    scheduleHandsFreeListening();
+  }, [handsFreeActive, scheduleHandsFreeListening]);
+
+  const pauseHandsFreeForSend = useCallback(() => {
+    handsFreePausedRef.current = true;
+    setHandsFreePaused(true);
+    pauseHandsFreeListening();
+  }, [pauseHandsFreeListening]);
+
+  const resumeHandsFreeAfterSend = useCallback(() => {
+    handsFreePausedRef.current = false;
+    setHandsFreePaused(false);
+    if (voiceStatusRef.current.ttsEnabled) {
+      return;
+    }
+    scheduleHandsFreeListening();
+  }, [scheduleHandsFreeListening]);
 
   return {
     voiceStatus,
@@ -270,9 +538,18 @@ export function usePracticeVoice(sessionId: string) {
     audioOutputModeHint,
     setAudioOutputMode,
     recording,
+    listening,
     transcribing,
+    handsFreeActive,
+    clientSpeaking,
+    micPaused,
     playClientMessage,
     setSessionActive,
     toggleBatchMic,
+    interruptClient,
+    setOnAutoSend,
+    beginHandsFreeTurn,
+    pauseHandsFreeForSend,
+    resumeHandsFreeAfterSend,
   };
 }

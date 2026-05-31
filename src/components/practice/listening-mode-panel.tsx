@@ -165,9 +165,8 @@ export function ListeningModeStatusBar({
               Client speaking · {details.label} mode
             </p>
             <p className="mt-1 text-sm leading-relaxed text-amber-900">
-              Your mic is paused right now. It will <span className="font-medium">not</span> hear
-              you until you click <span className="font-medium">Interrupt client</span> or the mic
-              button.
+              Your mic is paused while the client speaks. It will reopen automatically when they
+              finish, or click <span className="font-medium">Interrupt client</span> to jump in now.
             </p>
           </div>
           {onInterrupt && (
@@ -188,8 +187,8 @@ export function ListeningModeStatusBar({
     return (
       <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5">
         <p className="text-sm text-slate-700">
-          <span className="font-medium">{details.label} mode · Mic muted.</span> Tap the mic button
-          to unmute before you speak.
+          <span className="font-medium">{details.label} mode · Mic paused.</span> It will reopen
+          when the client finishes speaking.
         </p>
       </div>
     );
@@ -197,11 +196,10 @@ export function ListeningModeStatusBar({
 
   if (mode === "speakers") {
     return (
-      <div className="rounded-lg border border-amber-200 bg-amber-50/80 px-3 py-2.5">
-        <p className="text-sm text-amber-950">
-          <span className="font-medium">{details.label} mode · Mic live.</span> When the client
-          starts speaking, your mic will pause automatically. Use Interrupt client to jump in — it
-          will not unpause just because you start talking.
+      <div className="rounded-lg border border-emerald-200 bg-emerald-50/80 px-3 py-2.5">
+        <p className="text-sm text-emerald-900">
+          <span className="font-medium">{details.label} mode · Mic live.</span> Speak naturally —
+          we detect when you&apos;re done and send your response automatically.
         </p>
       </div>
     );
