@@ -3,8 +3,8 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev",
-    "build": "prisma generate && next build",
+    "dev": "next dev --webpack",
+    "build": "prisma generate && next build --webpack",
     "start": "prisma migrate deploy && next start",
     "lint": "eslint",
     "postinstall": "prisma generate",
@@ -14,6 +14,7 @@
     "test:llm": "node scripts/test-llm.mjs"
   },
   "dependencies": {
+    "@met4citizen/talkinghead": "^1.7.0",
     "@prisma/adapter-pg": "^7.8.0",
     "@prisma/client": "^7.8.0",
     "bcryptjs": "^3.0.3",
@@ -25,6 +26,7 @@
     "prisma": "^7.8.0",
     "react": "19.2.4",
     "react-dom": "19.2.4",
+    "three": "^0.184.0",
     "zod": "^4.4.3"
   },
   "devDependencies": {

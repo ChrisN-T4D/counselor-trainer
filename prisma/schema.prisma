@@ -86,6 +86,7 @@ model Scenario {
   sessionParticipants String[]
   generationSettings  Json?
   clientVoiceId       String?
+  clientAvatarKey     String?
   isTemplate          Boolean             @default(false)
   sessions            Session[]
   clientCases         ClientCase[]

@@ -1,6 +1,9 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
+import type { AvatarPlaybackHandle } from "@/components/practice/client-presence-panel";
+import { moodFromClientText } from "@/lib/visual/delivery-tag-mood";
+import type { PracticeViewMode } from "@/lib/visual/types";
 import {
   type AudioOutputMode,
   type AudioOutputModeHint,
@@ -23,7 +26,13 @@ type VoiceStatus = {
 const POST_TTS_DELAY_MS = 350;
 const MAX_UTTERANCE_MS = 120_000;
 
-export function usePracticeVoice(sessionId: string) {
+type UsePracticeVoiceOptions = {
+  viewMode?: PracticeViewMode;
+  visualEnabled?: boolean;
+  avatarPlaybackRef?: RefObject<AvatarPlaybackHandle | null>;
+};
+
+export function usePracticeVoice(sessionId: string, options: UsePracticeVoiceOptions = {}) {
   const [voiceStatus, setVoiceStatus] = useState<VoiceStatus>({
     ttsEnabled: false,
     sttEnabled: false,
@@ -55,6 +64,17 @@ export function usePracticeVoice(sessionId: string) {
   const simulationPausedRef = useRef(false);
   const onAutoSendRef = useRef<((text: string) => void | Promise<void>) | null>(null);
   const voiceStatusRef = useRef(voiceStatus);
+  const viewModeRef = useRef(options.viewMode ?? "text");
+  const visualEnabledRef = useRef(options.visualEnabled ?? false);
+  const avatarPlaybackRef = options.avatarPlaybackRef;
+
+  useEffect(() => {
+    viewModeRef.current = options.viewMode ?? "text";
+  }, [options.viewMode]);
+
+  useEffect(() => {
+    visualEnabledRef.current = options.visualEnabled ?? false;
+  }, [options.visualEnabled]);
 
   const voiceTurnActive = voiceStatus.sttEnabled;
   const clientSpeaking = playingMessageId !== null;
@@ -84,6 +104,7 @@ export function usePracticeVoice(sessionId: string) {
   }, []);
 
   const stopPlayback = useCallback(() => {
+    avatarPlaybackRef?.current?.stop();
     if (audioRef.current) {
       audioRef.current.pause();
       audioRef.current = null;
@@ -93,7 +114,7 @@ export function usePracticeVoice(sessionId: string) {
       audioUrlRef.current = null;
     }
     setPlayingMessageId(null);
-  }, []);
+  }, [avatarPlaybackRef]);
 
   useEffect(() => {
     playingMessageIdRef.current = playingMessageId;
@@ -469,6 +490,25 @@ export function usePracticeVoice(sessionId: string) {
         }
 
         const blob = await response.blob();
+        const useAvatarPlayback =
+          visualEnabledRef.current &&
+          viewModeRef.current === "avatar" &&
+          avatarPlaybackRef?.current?.isReady();
+
+        if (useAvatarPlayback && avatarPlaybackRef?.current) {
+          setPlayingMessageId(messageId);
+
+          if (shouldEnableVoiceBargeIn(audioOutputModeRef.current)) {
+            void startBargeInMonitor();
+          }
+
+          await avatarPlaybackRef.current.speak(blob, text, moodFromClientText(text));
+          stopPlayback();
+          stopVad();
+          scheduleVoiceTurn();
+          return;
+        }
+
         const url = URL.createObjectURL(blob);
         audioUrlRef.current = url;
 
@@ -502,6 +542,7 @@ export function usePracticeVoice(sessionId: string) {
       }
     },
     [
+      avatarPlaybackRef,
       interruptClient,
       pauseVoiceTurn,
       playingMessageId,

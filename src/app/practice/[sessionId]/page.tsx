@@ -13,7 +13,7 @@ export default async function PracticePage({ params }: PageProps) {
   return (
     <>
       <AppHeader />
-      <main className="mx-auto max-w-4xl px-4 py-8">
+      <main className="mx-auto max-w-6xl px-4 py-8">
         <PracticeChat sessionId={sessionId} />
       </main>
     </>

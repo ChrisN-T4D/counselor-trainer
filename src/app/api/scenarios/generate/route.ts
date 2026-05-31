@@ -81,6 +81,7 @@ export async function POST(request: Request) {
             generationSettings: parsedInput.data,
             caseWriteup: generated.caseWriteup,
             clientVoiceId: generated.clientVoiceId,
+            clientAvatarKey: generated.clientAvatarKey,
             isTemplate: false,
           },
           select: PUBLIC_SCENARIO_SELECT,

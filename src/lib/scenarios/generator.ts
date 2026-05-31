@@ -11,6 +11,7 @@ import {
   type ScenarioGenerationProgress,
 } from "@/lib/scenarios/generation-progress";
 import { resolveClientVoiceIdForScenario } from "@/lib/voice/voice-catalog";
+import { resolveClientAvatarKeyForScenario } from "@/lib/visual/avatar-catalog";
 
 export const scenarioGenerationInputSchema = z.object({
   contextType: z.enum([
@@ -58,6 +59,7 @@ export type GeneratedScenario = z.infer<typeof generatedScenarioSchema>;
 
 export type GeneratedScenarioWithVoice = GeneratedScenario & {
   clientVoiceId: string;
+  clientAvatarKey: string;
 };
 
 function contextLabel(contextType: ScenarioContextType) {
@@ -187,10 +189,14 @@ export async function generateScenarioFromSettingsStreaming(
     ageGroup: input.ageGroup,
     generationSettings: { clientGender: scenario.clientGender },
   });
+  const clientAvatarKey = resolveClientAvatarKeyForScenario({
+    ageGroup: input.ageGroup,
+    generationSettings: { clientGender: scenario.clientGender },
+  });
 
   onProgress({ percent: 92, stage: "parsing" });
 
-  return { ...scenario, clientVoiceId };
+  return { ...scenario, clientVoiceId, clientAvatarKey };
 }
 
 export async function generateScenarioFromSettings(

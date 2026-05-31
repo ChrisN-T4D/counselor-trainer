@@ -2,8 +2,19 @@
 
 import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+import {
+  ClientPresencePanel,
+  type AvatarPlaybackHandle,
+} from "@/components/practice/client-presence-panel";
 import { usePracticeVoice } from "@/components/practice/use-practice-voice";
+import { usePracticeViewMode } from "@/components/practice/use-practice-view-mode";
+import { PracticeViewToggle } from "@/components/practice/practice-view-toggle";
 import { ListeningModePanel, ListeningModeStatusBar } from "@/components/practice/listening-mode-panel";
+import {
+  getAvatarCatalogEntry,
+  resolveClientAvatarKeyForScenario,
+} from "@/lib/visual/avatar-catalog";
+import type { VisualStatus } from "@/lib/visual/types";
 import { formatClientTextForDisplay } from "@/lib/voice/delivery-tags";
 
 type Message = {
@@ -24,6 +35,9 @@ type PracticeSession = {
     contextLabel?: string;
     dsmCategory: string;
     presentingProblem: string;
+    ageGroup?: string;
+    clientAvatarKey?: string | null;
+    generationSettings?: unknown;
   };
   messages: Message[];
 };
@@ -65,7 +79,20 @@ export function PracticeChat({ sessionId }: { sessionId: string }) {
   const [helpText, setHelpText] = useState<string | null>(null);
   const [helpLoading, setHelpLoading] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
+  const [visualStatus, setVisualStatus] = useState<VisualStatus>({
+    visualEnabled: false,
+    provider: "noop",
+  });
   const voiceTurnStartedRef = useRef(false);
+  const avatarPlaybackRef = useRef<AvatarPlaybackHandle | null>(null);
+
+  const { viewMode, setViewMode, hydrated: viewModeHydrated } = usePracticeViewMode(
+    visualStatus.visualEnabled,
+  );
+
+  const handleAvatarReady = useCallback((handle: AvatarPlaybackHandle | null) => {
+    avatarPlaybackRef.current = handle;
+  }, []);
 
   const {
     voiceStatus,
@@ -92,7 +119,24 @@ export function PracticeChat({ sessionId }: { sessionId: string }) {
     resumeVoiceTurnAfterSend,
     pauseSimulation,
     resumeSimulation,
-  } = usePracticeVoice(sessionId);
+  } = usePracticeVoice(sessionId, {
+    viewMode: viewModeHydrated ? viewMode : "text",
+    visualEnabled: visualStatus.visualEnabled,
+    avatarPlaybackRef,
+  });
+
+  useEffect(() => {
+    async function loadVisualStatus() {
+      const response = await fetch("/api/visual/status");
+      if (!response.ok) {
+        return;
+      }
+      const data = (await response.json()) as VisualStatus;
+      setVisualStatus(data);
+    }
+
+    void loadVisualStatus();
+  }, []);
 
   useEffect(() => {
     setSessionActive(practiceSession?.status === "ACTIVE");
@@ -398,10 +442,38 @@ export function PracticeChat({ sessionId }: { sessionId: string }) {
     ? "Type a response instead, or just speak when the mic is live…"
     : "Respond as the therapist...";
 
+  const avatarKey = practiceSession
+    ? resolveClientAvatarKeyForScenario({
+        clientAvatarKey: practiceSession.scenario.clientAvatarKey,
+        ageGroup: practiceSession.scenario.ageGroup,
+        generationSettings: practiceSession.scenario.generationSettings,
+      })
+    : null;
+  const avatarEntry = avatarKey ? getAvatarCatalogEntry(avatarKey) ?? null : null;
+
+  const presenceLabel = clientSpeaking
+    ? "Speaking"
+    : listening || recording
+      ? "Listening"
+      : simulationPaused
+        ? "Paused"
+        : "In session";
+
+  const showAvatarPanel = visualStatus.visualEnabled && viewModeHydrated && viewMode === "avatar";
+
   return (
     <div className="flex flex-col gap-4">
       <div className="rounded-lg border border-slate-200 bg-white p-4">
-        <h1 className="text-xl font-semibold text-slate-900">{practiceSession.scenario.title}</h1>
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="min-w-0 flex-1">
+            <h1 className="text-xl font-semibold text-slate-900">{practiceSession.scenario.title}</h1>
+          </div>
+          <PracticeViewToggle
+            viewMode={viewModeHydrated ? viewMode : "text"}
+            visualEnabled={visualStatus.visualEnabled}
+            onChange={setViewMode}
+          />
+        </div>
         {practiceSession.sessionNumber && practiceSession.sessionNumber > 0 && (
           <p className="mt-1 text-xs font-medium uppercase tracking-wide text-slate-500">
             Session {practiceSession.sessionNumber}
@@ -428,6 +500,14 @@ export function PracticeChat({ sessionId }: { sessionId: string }) {
           </div>
         )}
       </div>
+
+      {showAvatarPanel && (
+        <ClientPresencePanel
+          avatarEntry={avatarEntry}
+          presenceLabel={presenceLabel}
+          onReady={handleAvatarReady}
+        />
+      )}
 
       <div className="relative min-h-[420px] rounded-lg border border-slate-200 bg-slate-50 p-4">
         {simulationPaused && (
