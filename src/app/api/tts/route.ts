@@ -3,7 +3,23 @@ import { z } from "zod";
 import { auth } from "@/auth";
 import { db } from "@/lib/db";
 import { createTtsProvider } from "@/lib/voice/factory";
-import { resolveClientVoiceIdForScenario } from "@/lib/voice/voice-catalog";
+import {
+  listPremadeCatalogVoices,
+  resolveClientVoiceIdForScenario,
+} from "@/lib/voice/voice-catalog";
+
+function isLibraryVoiceError(message: string): boolean {
+  const lower = message.toLowerCase();
+  return (
+    lower.includes("paid_plan_required") ||
+    lower.includes("library voices") ||
+    lower.includes("upgrade your subscription")
+  );
+}
+
+function defaultPremadeVoiceId(): string {
+  return listPremadeCatalogVoices()[0]?.id ?? "21m00Tcm4TlvDq8ikWAM";
+}
 
 const ttsSchema = z.object({
   text: z.string().min(1).max(5000),
@@ -31,10 +47,16 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Invalid request" }, { status: 400 });
   }
 
-  let voiceId = parsed.data.voiceId?.trim();
+  let practiceSession: {
+    scenario: {
+      clientVoiceId: string | null;
+      ageGroup: string | null;
+      generationSettings: unknown;
+    };
+  } | null = null;
 
-  if (!voiceId && parsed.data.sessionId) {
-    const practiceSession = await db.session.findFirst({
+  if (parsed.data.sessionId) {
+    practiceSession = await db.session.findFirst({
       where: { id: parsed.data.sessionId, userId: session.user.id },
       select: {
         scenario: {
@@ -46,10 +68,13 @@ export async function POST(request: Request) {
         },
       },
     });
+  }
 
-    if (practiceSession?.scenario) {
-      voiceId = resolveClientVoiceIdForScenario(practiceSession.scenario);
-    }
+  let voiceId = parsed.data.voiceId?.trim();
+  if (practiceSession?.scenario) {
+    voiceId = resolveClientVoiceIdForScenario(practiceSession.scenario);
+  } else if (!voiceId) {
+    voiceId = defaultPremadeVoiceId();
   }
 
   try {
@@ -60,32 +85,16 @@ export async function POST(request: Request) {
       audio = await tts.synthesize(parsed.data.text, { voiceId });
     } catch (error) {
       const message = error instanceof Error ? error.message : "";
-      const isLibraryVoiceError =
-        message.includes("paid_plan_required") ||
-        message.includes("library voices via the API");
 
-      if (!isLibraryVoiceError || !parsed.data.sessionId) {
+      if (!isLibraryVoiceError(message)) {
         throw error;
       }
 
-      const practiceSession = await db.session.findFirst({
-        where: { id: parsed.data.sessionId, userId: session.user.id },
-        select: {
-          scenario: {
-            select: {
-              clientVoiceId: true,
-              ageGroup: true,
-              generationSettings: true,
-            },
-          },
-        },
-      });
-
       const fallbackVoiceId = practiceSession?.scenario
         ? resolveClientVoiceIdForScenario(practiceSession.scenario)
-        : undefined;
+        : defaultPremadeVoiceId();
 
-      if (!fallbackVoiceId || fallbackVoiceId === voiceId) {
+      if (fallbackVoiceId === voiceId) {
         throw error;
       }
 

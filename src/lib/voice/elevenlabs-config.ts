@@ -1,4 +1,8 @@
+import { isPremadeCatalogVoiceId, listPremadeCatalogVoices } from "./voice-catalog";
+
 const ELEVENLABS_API_BASE = "https://api.elevenlabs.io/v1";
+
+const DEFAULT_PREMADE_VOICE_ID = "21m00Tcm4TlvDq8ikWAM";
 
 export function getElevenLabsApiKey(): string {
   const apiKey = process.env.ELEVENLABS_API_KEY?.trim();
@@ -8,14 +12,19 @@ export function getElevenLabsApiKey(): string {
   return apiKey;
 }
 
+/** Resolve a free-tier premade voice ID (Voice Library IDs fail on free API plans). */
 export function getElevenLabsVoiceId(override?: string): string {
-  const voiceId = override?.trim() || process.env.ELEVENLABS_VOICE_ID?.trim();
-  if (!voiceId) {
-    throw new Error(
-      "No voice ID available. Assign clientVoiceId on the scenario or set ELEVENLABS_VOICE_ID as fallback.",
-    );
+  const overrideId = override?.trim();
+  if (overrideId && isPremadeCatalogVoiceId(overrideId)) {
+    return overrideId;
   }
-  return voiceId;
+
+  const envId = process.env.ELEVENLABS_VOICE_ID?.trim();
+  if (envId && isPremadeCatalogVoiceId(envId)) {
+    return envId;
+  }
+
+  return listPremadeCatalogVoices()[0]?.id ?? DEFAULT_PREMADE_VOICE_ID;
 }
 
 export function getElevenLabsTtsModelId(): string {
