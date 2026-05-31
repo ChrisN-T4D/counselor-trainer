@@ -7,10 +7,13 @@ export type VoiceCatalogEntry = {
   genders: ClientGender[];
 };
 
+/** Rachel — default free-tier premade voice. */
+export const DEFAULT_FREE_TIER_VOICE_ID = "21m00Tcm4TlvDq8ikWAM";
+
 /** Premade ElevenLabs voices — free-tier API safe (not Voice Library). */
 const DEFAULT_VOICE_CATALOG: VoiceCatalogEntry[] = [
   {
-    id: "21m00Tcm4TlvDq8ikWAM",
+    id: DEFAULT_FREE_TIER_VOICE_ID,
     label: "Rachel — calm adult female",
     ageGroups: ["adult"],
     genders: ["female"],
@@ -53,6 +56,13 @@ const DEFAULT_VOICE_CATALOG: VoiceCatalogEntry[] = [
   },
 ];
 
+const FREE_TIER_VOICE_IDS = new Set(DEFAULT_VOICE_CATALOG.map((entry) => entry.id));
+
+/** True only for built-in premade IDs — ignores custom ELEVENLABS_VOICE_CATALOG entries. */
+export function isFreeTierPremadeVoiceId(voiceId: string): boolean {
+  return FREE_TIER_VOICE_IDS.has(voiceId.trim());
+}
+
 function loadVoiceCatalog(): VoiceCatalogEntry[] {
   const raw = process.env.ELEVENLABS_VOICE_CATALOG?.trim();
   if (!raw) {
@@ -64,7 +74,9 @@ function loadVoiceCatalog(): VoiceCatalogEntry[] {
     if (!Array.isArray(parsed) || parsed.length === 0) {
       return DEFAULT_VOICE_CATALOG;
     }
-    return parsed;
+
+    const filtered = parsed.filter((entry) => isFreeTierPremadeVoiceId(entry.id));
+    return filtered.length > 0 ? filtered : DEFAULT_VOICE_CATALOG;
   } catch {
     return DEFAULT_VOICE_CATALOG;
   }
@@ -76,7 +88,8 @@ function pickVoice(
   gender: ClientGender,
 ): VoiceCatalogEntry | undefined {
   const exact = catalog.find(
-    (entry) => entry.ageGroups.includes(ageGroup as VoiceCatalogEntry["ageGroups"][number]) &&
+    (entry) =>
+      entry.ageGroups.includes(ageGroup as VoiceCatalogEntry["ageGroups"][number]) &&
       entry.genders.includes(gender),
   );
   if (exact) {
@@ -100,20 +113,20 @@ export function selectClientVoiceId(input: {
   const envFallback = process.env.ELEVENLABS_VOICE_ID?.trim();
   const picked = pickVoice(loadVoiceCatalog(), input.ageGroup, input.gender);
 
-  if (picked?.id) {
+  if (picked?.id && isFreeTierPremadeVoiceId(picked.id)) {
     return picked.id;
   }
 
-  if (envFallback && isPremadeCatalogVoiceId(envFallback)) {
+  if (envFallback && isFreeTierPremadeVoiceId(envFallback)) {
     return envFallback;
   }
 
-  return DEFAULT_VOICE_CATALOG[0].id;
+  return DEFAULT_FREE_TIER_VOICE_ID;
 }
 
+/** @deprecated Use isFreeTierPremadeVoiceId — kept for callers that expect the old name. */
 export function isPremadeCatalogVoiceId(voiceId: string): boolean {
-  const catalog = loadVoiceCatalog();
-  return catalog.some((entry) => entry.id === voiceId);
+  return isFreeTierPremadeVoiceId(voiceId);
 }
 
 function clientGenderFromGenerationSettings(generationSettings: unknown): ClientGender {
@@ -136,7 +149,7 @@ export function resolveClientVoiceIdForScenario(input: {
   generationSettings?: unknown;
 }): string {
   const stored = input.clientVoiceId?.trim();
-  if (stored && isPremadeCatalogVoiceId(stored)) {
+  if (stored && isFreeTierPremadeVoiceId(stored)) {
     return stored;
   }
 
@@ -147,5 +160,5 @@ export function resolveClientVoiceIdForScenario(input: {
 }
 
 export function listPremadeCatalogVoices(): VoiceCatalogEntry[] {
-  return loadVoiceCatalog();
+  return DEFAULT_VOICE_CATALOG;
 }

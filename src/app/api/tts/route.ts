@@ -4,6 +4,7 @@ import { auth } from "@/auth";
 import { db } from "@/lib/db";
 import { createTtsProvider } from "@/lib/voice/factory";
 import {
+  DEFAULT_FREE_TIER_VOICE_ID,
   listPremadeCatalogVoices,
   resolveClientVoiceIdForScenario,
 } from "@/lib/voice/voice-catalog";
@@ -13,12 +14,37 @@ function isLibraryVoiceError(message: string): boolean {
   return (
     lower.includes("paid_plan_required") ||
     lower.includes("library voices") ||
-    lower.includes("upgrade your subscription")
+    lower.includes("upgrade your subscription") ||
+    lower.includes("paid elevenlabs plan")
   );
 }
 
-function defaultPremadeVoiceId(): string {
-  return listPremadeCatalogVoices()[0]?.id ?? "21m00Tcm4TlvDq8ikWAM";
+function resolveVoiceId(input: {
+  requestedVoiceId?: string;
+  scenario?: {
+    clientVoiceId: string | null;
+    ageGroup: string | null;
+    generationSettings: unknown;
+  } | null;
+}): string {
+  if (input.scenario) {
+    return resolveClientVoiceIdForScenario(input.scenario);
+  }
+
+  const requested = input.requestedVoiceId?.trim();
+  if (requested && listPremadeCatalogVoices().some((entry) => entry.id === requested)) {
+    return requested;
+  }
+
+  return DEFAULT_FREE_TIER_VOICE_ID;
+}
+
+async function synthesizeWithVoice(
+  tts: ReturnType<typeof createTtsProvider>,
+  text: string,
+  voiceId: string,
+): Promise<ArrayBuffer> {
+  return tts.synthesize(text, { voiceId });
 }
 
 const ttsSchema = z.object({
@@ -70,35 +96,38 @@ export async function POST(request: Request) {
     });
   }
 
-  let voiceId = parsed.data.voiceId?.trim();
-  if (practiceSession?.scenario) {
-    voiceId = resolveClientVoiceIdForScenario(practiceSession.scenario);
-  } else if (!voiceId) {
-    voiceId = defaultPremadeVoiceId();
-  }
+  let voiceId = resolveVoiceId({
+    requestedVoiceId: parsed.data.voiceId,
+    scenario: practiceSession?.scenario ?? null,
+  });
+
+  const fallbacks = [
+    voiceId,
+    resolveClientVoiceIdForScenario(practiceSession?.scenario ?? {}),
+    DEFAULT_FREE_TIER_VOICE_ID,
+  ].filter((id, index, all) => all.indexOf(id) === index);
 
   try {
     const tts = createTtsProvider();
-    let audio: ArrayBuffer;
+    let audio: ArrayBuffer | undefined;
+    let lastError: unknown;
 
-    try {
-      audio = await tts.synthesize(parsed.data.text, { voiceId });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "";
-
-      if (!isLibraryVoiceError(message)) {
-        throw error;
+    for (const candidate of fallbacks) {
+      try {
+        audio = await synthesizeWithVoice(tts, parsed.data.text, candidate);
+        lastError = undefined;
+        break;
+      } catch (error) {
+        lastError = error;
+        const message = error instanceof Error ? error.message : "";
+        if (!isLibraryVoiceError(message)) {
+          throw error;
+        }
       }
+    }
 
-      const fallbackVoiceId = practiceSession?.scenario
-        ? resolveClientVoiceIdForScenario(practiceSession.scenario)
-        : defaultPremadeVoiceId();
-
-      if (fallbackVoiceId === voiceId) {
-        throw error;
-      }
-
-      audio = await tts.synthesize(parsed.data.text, { voiceId: fallbackVoiceId });
+    if (!audio) {
+      throw lastError ?? new Error("TTS failed for all premade voice fallbacks");
     }
     return new NextResponse(audio, {
       headers: { "Content-Type": "audio/mpeg" },
