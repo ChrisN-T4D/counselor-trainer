@@ -6,8 +6,7 @@ import {
   getScenarioModel,
 } from "@/lib/llm/config";
 import type { LlmProvider } from "@/lib/llm/provider";
-import type { ClientGender } from "@/lib/voice/voice-catalog";
-import { selectClientVoiceId } from "@/lib/voice/voice-catalog";
+import { resolveClientVoiceIdForScenario } from "@/lib/voice/voice-catalog";
 
 export const scenarioGenerationInputSchema = z.object({
   contextType: z.enum([
@@ -160,9 +159,9 @@ export async function generateScenarioFromSettings(
 
   const parsed = parseLlmJson(raw);
   const scenario = generatedScenarioSchema.parse(parsed);
-  const clientVoiceId = selectClientVoiceId({
+  const clientVoiceId = resolveClientVoiceIdForScenario({
     ageGroup: input.ageGroup,
-    gender: scenario.clientGender as ClientGender,
+    generationSettings: { clientGender: scenario.clientGender },
   });
 
   return { ...scenario, clientVoiceId };

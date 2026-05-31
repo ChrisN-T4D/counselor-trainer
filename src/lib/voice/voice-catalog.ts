@@ -7,7 +7,7 @@ export type VoiceCatalogEntry = {
   genders: ClientGender[];
 };
 
-/** Premade ElevenLabs voices — override with ELEVENLABS_VOICE_CATALOG JSON if needed. */
+/** Premade ElevenLabs voices — free-tier API safe (not Voice Library). */
 const DEFAULT_VOICE_CATALOG: VoiceCatalogEntry[] = [
   {
     id: "21m00Tcm4TlvDq8ikWAM",
@@ -97,7 +97,55 @@ export function selectClientVoiceId(input: {
   ageGroup: string;
   gender: ClientGender;
 }): string {
-  const fallback = process.env.ELEVENLABS_VOICE_ID?.trim();
+  const envFallback = process.env.ELEVENLABS_VOICE_ID?.trim();
   const picked = pickVoice(loadVoiceCatalog(), input.ageGroup, input.gender);
-  return picked?.id ?? fallback ?? DEFAULT_VOICE_CATALOG[0].id;
+
+  if (picked?.id) {
+    return picked.id;
+  }
+
+  if (envFallback && isPremadeCatalogVoiceId(envFallback)) {
+    return envFallback;
+  }
+
+  return DEFAULT_VOICE_CATALOG[0].id;
+}
+
+export function isPremadeCatalogVoiceId(voiceId: string): boolean {
+  const catalog = loadVoiceCatalog();
+  return catalog.some((entry) => entry.id === voiceId);
+}
+
+function clientGenderFromGenerationSettings(generationSettings: unknown): ClientGender {
+  if (!generationSettings || typeof generationSettings !== "object") {
+    return "neutral";
+  }
+
+  const gender = (generationSettings as { clientGender?: string }).clientGender;
+  if (gender === "female" || gender === "male" || gender === "neutral") {
+    return gender;
+  }
+
+  return "neutral";
+}
+
+/** Pick a free-tier premade voice for a scenario (generator + TTS fallback). */
+export function resolveClientVoiceIdForScenario(input: {
+  clientVoiceId?: string | null;
+  ageGroup?: string | null;
+  generationSettings?: unknown;
+}): string {
+  const stored = input.clientVoiceId?.trim();
+  if (stored && isPremadeCatalogVoiceId(stored)) {
+    return stored;
+  }
+
+  return selectClientVoiceId({
+    ageGroup: input.ageGroup?.trim() || "adult",
+    gender: clientGenderFromGenerationSettings(input.generationSettings),
+  });
+}
+
+export function listPremadeCatalogVoices(): VoiceCatalogEntry[] {
+  return loadVoiceCatalog();
 }

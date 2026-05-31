@@ -3,6 +3,7 @@ import { join } from "node:path";
 import "dotenv/config";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { Prisma, PrismaClient } from "../src/generated/prisma/client";
+import { resolveClientVoiceIdForScenario } from "../src/lib/voice/voice-catalog";
 
 type ScenarioSeed = {
   title: string;
@@ -40,6 +41,11 @@ async function main() {
   const scenarios = JSON.parse(readFileSync(filePath, "utf-8")) as ScenarioSeed[];
 
   for (const scenario of scenarios) {
+    const clientVoiceId = resolveClientVoiceIdForScenario({
+      ageGroup: scenario.ageGroup,
+      generationSettings: scenario.generationSettings,
+    });
+
     await db.scenario.upsert({
       where: { title: scenario.title },
       update: {
@@ -55,10 +61,12 @@ async function main() {
         sessionParticipants: scenario.sessionParticipants,
         generationSettings: scenario.generationSettings,
         caseWriteup: scenario.caseWriteup,
+        clientVoiceId,
         isTemplate: scenario.isTemplate ?? true,
       },
       create: {
         ...scenario,
+        clientVoiceId,
         isTemplate: scenario.isTemplate ?? true,
       },
     });

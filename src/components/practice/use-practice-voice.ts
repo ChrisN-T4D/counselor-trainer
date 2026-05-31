@@ -13,6 +13,8 @@ import {
 type VoiceStatus = {
   ttsEnabled: boolean;
   sttEnabled: boolean;
+  ttsError?: string;
+  sttError?: string;
 };
 
 export function usePracticeVoice(sessionId: string) {
@@ -102,6 +104,11 @@ export function usePracticeVoice(sessionId: string) {
       }
       const data = (await response.json()) as VoiceStatus;
       setVoiceStatus(data);
+      if (data.ttsError) {
+        setVoiceError(data.ttsError);
+      } else if (data.sttError) {
+        setVoiceError(data.sttError);
+      }
     }
 
     loadVoiceStatus();
@@ -152,12 +159,16 @@ export function usePracticeVoice(sessionId: string) {
       try {
         const response = await fetch("/api/tts", {
           method: "POST",
+          credentials: "same-origin",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ text, sessionId }),
         });
 
         if (!response.ok) {
           const data = (await response.json().catch(() => ({}))) as { error?: string };
+          if (response.status === 401 && data.error === "Unauthorized") {
+            throw new Error("Your session expired. Refresh the page and sign in again.");
+          }
           throw new Error(data.error ?? "Could not play client voice");
         }
 

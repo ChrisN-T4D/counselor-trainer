@@ -10,19 +10,8 @@ import {
   normalizeDeliveryTagsForTts,
   voiceSettingsForDelivery,
 } from "./delivery-tags";
+import { readElevenLabsError } from "./elevenlabs-errors";
 import type { TtsProvider } from "./tts-provider";
-
-async function readElevenLabsError(response: Response): Promise<string> {
-  try {
-    const body = (await response.json()) as { detail?: unknown };
-    if (typeof body.detail === "string") {
-      return body.detail;
-    }
-    return JSON.stringify(body.detail ?? body);
-  } catch {
-    return response.statusText || "ElevenLabs TTS request failed";
-  }
-}
 
 export const elevenLabsTts: TtsProvider = {
   async synthesize(text, opts) {
@@ -49,7 +38,7 @@ export const elevenLabsTts: TtsProvider = {
     );
 
     if (!response.ok) {
-      throw new Error(await readElevenLabsError(response));
+      throw new Error(await readElevenLabsError(response, "TTS"));
     }
 
     return response.arrayBuffer();

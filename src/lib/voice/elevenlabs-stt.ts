@@ -4,19 +4,8 @@ import {
   getElevenLabsApiKey,
   getElevenLabsSttModelId,
 } from "./elevenlabs-config";
+import { readElevenLabsError } from "./elevenlabs-errors";
 import type { SttProvider } from "./stt-provider";
-
-async function readElevenLabsError(response: Response): Promise<string> {
-  try {
-    const body = (await response.json()) as { detail?: unknown };
-    if (typeof body.detail === "string") {
-      return body.detail;
-    }
-    return JSON.stringify(body.detail ?? body);
-  } catch {
-    return response.statusText || "ElevenLabs STT request failed";
-  }
-}
 
 export const elevenLabsStt: SttProvider = {
   async transcribe(audio, opts) {
@@ -37,7 +26,7 @@ export const elevenLabsStt: SttProvider = {
     });
 
     if (!response.ok) {
-      throw new Error(await readElevenLabsError(response));
+      throw new Error(await readElevenLabsError(response, "STT"));
     }
 
     const body = (await response.json()) as {
