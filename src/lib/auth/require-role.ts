@@ -1,10 +1,10 @@
 import { redirect } from "next/navigation";
-import { auth } from "@/auth";
 import type { Role } from "@/generated/prisma/client";
 import { canAccessAdmin, canAccessSupervisor } from "@/lib/auth/roles";
+import { getAuthSession } from "@/lib/auth/session";
 
 export async function requireSupervisor() {
-  const session = await auth();
+  const session = await getAuthSession();
   if (!session?.user?.id || !canAccessSupervisor(session.user.role)) {
     redirect("/dashboard");
   }
@@ -12,7 +12,7 @@ export async function requireSupervisor() {
 }
 
 export async function requireAdmin() {
-  const session = await auth();
+  const session = await getAuthSession();
   if (!session?.user?.id) {
     redirect("/login");
   }
@@ -23,7 +23,7 @@ export async function requireAdmin() {
 }
 
 export async function requireRole(allowed: Role[]) {
-  const session = await auth();
+  const session = await getAuthSession();
   if (!session?.user?.id || !allowed.includes(session.user.role)) {
     redirect("/dashboard");
   }

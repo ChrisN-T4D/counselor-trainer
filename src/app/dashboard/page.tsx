@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { auth } from "@/auth";
+import { getAuthSession } from "@/lib/auth/session";
 import { AppHeader } from "@/components/layout/app-header";
 import { MyCasesPanel } from "@/components/dashboard/my-cases-panel";
 import { canAccessAdmin, canAccessSupervisor } from "@/lib/auth/roles";
@@ -13,7 +13,7 @@ export default async function DashboardPage({
 }: {
   searchParams: Promise<{ error?: string }>;
 }) {
-  const session = await auth();
+  const session = await getAuthSession();
   const params = await searchParams;
   const userId = session!.user!.id;
 

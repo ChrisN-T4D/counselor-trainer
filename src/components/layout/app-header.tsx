@@ -1,9 +1,10 @@
 import Link from "next/link";
-import { auth, signOut } from "@/auth";
+import { signOut } from "@/auth";
 import { canAccessAdmin, canAccessSupervisor } from "@/lib/auth/roles";
+import { getAuthSession } from "@/lib/auth/session";
 
 export async function AppHeader() {
-  const session = await auth();
+  const session = await getAuthSession();
   const role = session?.user?.role;
 
   return (
