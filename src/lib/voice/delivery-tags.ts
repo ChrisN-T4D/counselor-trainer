@@ -106,7 +106,33 @@ export function voiceSettingsForDelivery(text: string): DeliveryVoiceSettings {
   return { stability: 0.5, similarity_boost: 0.75, style: 0.35 };
 }
 
-/** Normalize tags for Eleven v3 audio-tag syntax (e.g. [long pause] -> [pause]). */
+/** Map app delivery tags to Eleven v3 audio-tag syntax. */
+const TAG_TO_V3: Record<string, string> = {
+  pause: "pauses",
+  "long pause": "pauses",
+  hesitant: "nervously",
+  whispers: "whispers",
+  sigh: "sighs",
+  tearful: "crying",
+  sad: "sadly",
+  crying: "crying",
+  angry: "frustrated",
+  frustrated: "frustrated",
+  agitated: "frustrated",
+  upset: "sadly",
+  nervous: "nervously",
+  quietly: "whispers",
+};
+
+/** Normalize tags for Eleven v3 (e.g. [sigh] -> [sighs], [long pause] -> [pauses]). */
 export function normalizeDeliveryTagsForTts(text: string): string {
-  return text.replace(/\[long pause\]/gi, "[pause]");
+  return text.replace(TAG_REPLACE_PATTERN, (match) => {
+    const inner = match.slice(1, -1).toLowerCase().trim();
+    const mapped = TAG_TO_V3[inner] ?? inner;
+    return `[${mapped}]`;
+  });
+}
+
+export function usesElevenLabsExpressiveModel(modelId: string): boolean {
+  return /eleven_v3|v3/i.test(modelId);
 }

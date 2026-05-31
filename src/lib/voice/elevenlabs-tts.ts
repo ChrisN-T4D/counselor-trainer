@@ -8,6 +8,8 @@ import {
 import {
   hasDeliveryTags,
   normalizeDeliveryTagsForTts,
+  stripDeliveryTagsForDisplay,
+  usesElevenLabsExpressiveModel,
   voiceSettingsForDelivery,
 } from "./delivery-tags";
 import { readElevenLabsError } from "./elevenlabs-errors";
@@ -19,7 +21,9 @@ export const elevenLabsTts: TtsProvider = {
     const voiceId = getElevenLabsVoiceId(opts?.voiceId);
     const tagged = hasDeliveryTags(text);
     const modelId = resolveElevenLabsTtsModelId(text, tagged);
-    const ttsText = normalizeDeliveryTagsForTts(text);
+    const ttsText = usesElevenLabsExpressiveModel(modelId)
+      ? normalizeDeliveryTagsForTts(text)
+      : stripDeliveryTagsForDisplay(text);
 
     const response = await fetch(
       `${ELEVENLABS_API_BASE}/text-to-speech/${encodeURIComponent(voiceId)}?output_format=mp3_44100_128`,

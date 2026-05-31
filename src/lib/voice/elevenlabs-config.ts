@@ -33,21 +33,16 @@ export function getElevenLabsTtsModelId(): string {
   return process.env.ELEVENLABS_MODEL_ID?.trim() || "eleven_flash_v2_5";
 }
 
-/** Used when client text includes delivery tags. Defaults to flash on free tier — v3 may require paid. */
+/** Used when client text includes delivery tags — requires eleven_v3 (paid plans). */
 export function getElevenLabsExpressiveModelId(): string {
-  const configured = process.env.ELEVENLABS_EXPRESSIVE_MODEL_ID?.trim();
-  if (configured) {
-    return configured;
-  }
-  return getElevenLabsTtsModelId();
+  return process.env.ELEVENLABS_EXPRESSIVE_MODEL_ID?.trim() || "eleven_v3";
 }
 
-export function resolveElevenLabsTtsModelId(text: string, hasTags: boolean): string {
-  const allowExpressive = process.env.ELEVENLABS_USE_EXPRESSIVE_MODEL?.trim().toLowerCase();
-  const expressiveEnabled =
-    allowExpressive === "1" || allowExpressive === "true" || allowExpressive === "yes";
+export function resolveElevenLabsTtsModelId(_text: string, hasTags: boolean): string {
+  const flag = process.env.ELEVENLABS_USE_EXPRESSIVE_MODEL?.trim().toLowerCase();
+  const expressiveDisabled = flag === "0" || flag === "false" || flag === "no";
 
-  if (hasTags && expressiveEnabled) {
+  if (hasTags && !expressiveDisabled) {
     return getElevenLabsExpressiveModelId();
   }
   return getElevenLabsTtsModelId();
