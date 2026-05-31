@@ -50,16 +50,6 @@ function StopIcon() {
   );
 }
 
-function MicIcon() {
-  return (
-    <svg viewBox="0 0 20 20" fill="currentColor" className="h-4 w-4" aria-hidden="true">
-      <path d="M10 12.5a2.5 2.5 0 0 0 2.5-2.5V5.5A2.5 2.5 0 1 0 7.5 5.5v4.5A2.5 2.5 0 0 0 10 12.5Z" />
-      <path d="M5 9.5a5 5 0 0 0 10 0h-1.25a3.75 3.75 0 0 1-7.5 0H5Z" />
-      <path d="M9.25 14.625V16.5h1.5v-1.875A6.2 6.2 0 0 0 15.5 10h-1.25a4.95 4.95 0 0 1-9.5 0H4.5a6.2 6.2 0 0 0 4.75 4.625Z" />
-    </svg>
-  );
-}
-
 export function PracticeChat({ sessionId }: { sessionId: string }) {
   const router = useRouter();
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -72,7 +62,10 @@ export function PracticeChat({ sessionId }: { sessionId: string }) {
   const [streamingClientText, setStreamingClientText] = useState<string | null>(null);
   const [streamingMessageId, setStreamingMessageId] = useState<string | null>(null);
   const [ending, setEnding] = useState(false);
-  const handsFreeStartedRef = useRef(false);
+  const [helpText, setHelpText] = useState<string | null>(null);
+  const [helpLoading, setHelpLoading] = useState(false);
+  const [helpOpen, setHelpOpen] = useState(false);
+  const voiceTurnStartedRef = useRef(false);
 
   const {
     voiceStatus,
@@ -86,17 +79,19 @@ export function PracticeChat({ sessionId }: { sessionId: string }) {
     recording,
     listening,
     transcribing,
-    handsFreeActive,
+    voiceTurnActive,
     clientSpeaking,
     micPaused,
+    simulationPaused,
     playClientMessage,
     setSessionActive,
-    toggleBatchMic,
     interruptClient,
     setOnAutoSend,
-    beginHandsFreeTurn,
-    pauseHandsFreeForSend,
-    resumeHandsFreeAfterSend,
+    beginVoiceTurn,
+    pauseVoiceTurnForSend,
+    resumeVoiceTurnAfterSend,
+    pauseSimulation,
+    resumeSimulation,
   } = usePracticeVoice(sessionId);
 
   useEffect(() => {
@@ -126,11 +121,16 @@ export function PracticeChat({ sessionId }: { sessionId: string }) {
 
   const sendMessage = useCallback(
     async (messageText: string) => {
-      if (!messageText.trim() || sending || practiceSession?.status !== "ACTIVE") {
+      if (
+        !messageText.trim() ||
+        sending ||
+        simulationPaused ||
+        practiceSession?.status !== "ACTIVE"
+      ) {
         return;
       }
 
-      pauseHandsFreeForSend();
+      pauseVoiceTurnForSend();
       setSending(true);
       setError(null);
       setVoiceError(null);
@@ -150,7 +150,7 @@ export function PracticeChat({ sessionId }: { sessionId: string }) {
         setStreamingClientText(null);
         setStreamingMessageId(null);
         setSending(false);
-        resumeHandsFreeAfterSend();
+        resumeVoiceTurnAfterSend();
         return;
       }
 
@@ -159,7 +159,7 @@ export function PracticeChat({ sessionId }: { sessionId: string }) {
         setStreamingClientText(null);
         setStreamingMessageId(null);
         setSending(false);
-        resumeHandsFreeAfterSend();
+        resumeVoiceTurnAfterSend();
         return;
       }
 
@@ -216,7 +216,7 @@ export function PracticeChat({ sessionId }: { sessionId: string }) {
           if (voiceStatus.ttsEnabled) {
             void playClientMessage(clientMessage.id, clientMessage.content);
           } else {
-            resumeHandsFreeAfterSend();
+            resumeVoiceTurnAfterSend();
           }
         } else if (!therapistMessage) {
           throw new Error("Session turn did not complete");
@@ -225,7 +225,7 @@ export function PracticeChat({ sessionId }: { sessionId: string }) {
         }
       } catch (streamError) {
         setError(streamError instanceof Error ? streamError.message : "Failed to send message");
-        resumeHandsFreeAfterSend();
+        resumeVoiceTurnAfterSend();
       } finally {
         setStreamingClientText(null);
         setStreamingMessageId(null);
@@ -233,13 +233,14 @@ export function PracticeChat({ sessionId }: { sessionId: string }) {
       }
     },
     [
-      pauseHandsFreeForSend,
+      pauseVoiceTurnForSend,
       playClientMessage,
       practiceSession?.status,
-      resumeHandsFreeAfterSend,
+      resumeVoiceTurnAfterSend,
       sending,
       sessionId,
       setVoiceError,
+      simulationPaused,
       voiceStatus.ttsEnabled,
     ],
   );
@@ -254,13 +255,14 @@ export function PracticeChat({ sessionId }: { sessionId: string }) {
       loading ||
       !practiceSession ||
       practiceSession.status !== "ACTIVE" ||
-      !handsFreeActive ||
-      handsFreeStartedRef.current
+      !voiceTurnActive ||
+      simulationPaused ||
+      voiceTurnStartedRef.current
     ) {
       return;
     }
 
-    handsFreeStartedRef.current = true;
+    voiceTurnStartedRef.current = true;
     const lastMessage = practiceSession.messages.at(-1);
 
     if (lastMessage?.role === "CLIENT" && voiceStatus.ttsEnabled) {
@@ -268,22 +270,57 @@ export function PracticeChat({ sessionId }: { sessionId: string }) {
       return;
     }
 
-    beginHandsFreeTurn();
+    beginVoiceTurn();
   }, [
-    beginHandsFreeTurn,
-    handsFreeActive,
+    beginVoiceTurn,
     loading,
     playClientMessage,
     practiceSession,
+    simulationPaused,
     voiceStatus.ttsEnabled,
+    voiceTurnActive,
   ]);
 
-  async function handleBatchMicToggle() {
-    const text = await toggleBatchMic();
-    if (text) {
-      setInput((current) => (current.trim() ? `${current.trim()} ${text}` : text));
+  async function handleGetHelp() {
+    if (helpLoading || practiceSession?.status !== "ACTIVE") {
+      return;
     }
-    textareaRef.current?.focus();
+
+    const wasPaused = simulationPaused;
+    if (!wasPaused) {
+      pauseSimulation();
+    }
+
+    setHelpLoading(true);
+    setError(null);
+    setHelpOpen(true);
+
+    try {
+      const response = await fetch(`/api/sessions/${sessionId}/help`, { method: "POST" });
+      if (!response.ok) {
+        const data = (await response.json().catch(() => ({}))) as { error?: string };
+        throw new Error(data.error ?? "Could not load coaching suggestions");
+      }
+
+      const data = (await response.json()) as { suggestions: string };
+      setHelpText(data.suggestions);
+    } catch (helpError) {
+      setError(helpError instanceof Error ? helpError.message : "Could not load coaching suggestions");
+      setHelpOpen(false);
+      if (!wasPaused) {
+        resumeSimulation();
+      }
+    } finally {
+      setHelpLoading(false);
+    }
+  }
+
+  function handleTogglePause() {
+    if (simulationPaused) {
+      resumeSimulation();
+    } else {
+      pauseSimulation();
+    }
   }
 
   async function handleSend(event: FormEvent) {
@@ -324,7 +361,7 @@ export function PracticeChat({ sessionId }: { sessionId: string }) {
       <button
         type="button"
         onClick={() => playClientMessage(messageId, text)}
-        disabled={isLoading || !text.trim()}
+        disabled={isLoading || !text.trim() || simulationPaused}
         className="inline-flex items-center gap-1 rounded-md border border-slate-200 px-2 py-1 text-xs text-slate-600 hover:bg-slate-50 disabled:opacity-50"
         aria-label={isPlaying ? `Stop ${label}` : `Play ${label}`}
       >
@@ -357,11 +394,9 @@ export function PracticeChat({ sessionId }: { sessionId: string }) {
   const voiceBusy = recording || transcribing || listening;
   const showAudioSetup =
     practiceSession.status === "ACTIVE" && (voiceStatus.ttsEnabled || voiceStatus.sttEnabled);
-  const inputPlaceholder = handsFreeActive
+  const inputPlaceholder = voiceTurnActive
     ? "Type a response instead, or just speak when the mic is live…"
-    : voiceStatus.sttEnabled
-      ? "Type your response, or click the mic to record…"
-      : "Respond as the therapist...";
+    : "Respond as the therapist...";
 
   return (
     <div className="flex flex-col gap-4">
@@ -394,7 +429,17 @@ export function PracticeChat({ sessionId }: { sessionId: string }) {
         )}
       </div>
 
-      <div className="min-h-[420px] rounded-lg border border-slate-200 bg-slate-50 p-4">
+      <div className="relative min-h-[420px] rounded-lg border border-slate-200 bg-slate-50 p-4">
+        {simulationPaused && (
+          <div className="absolute inset-0 z-10 flex items-start justify-center rounded-lg bg-slate-900/10 p-6 backdrop-blur-[1px]">
+            <div className="rounded-lg border border-slate-300 bg-white px-4 py-3 shadow-sm">
+              <p className="text-sm font-medium text-slate-900">Simulation paused</p>
+              <p className="mt-1 text-sm text-slate-600">
+                Client audio and voice capture are stopped. Click Resume to continue.
+              </p>
+            </div>
+          </div>
+        )}
         <div className="space-y-3">
           {practiceSession.messages.map((message) => (
             <div
@@ -435,14 +480,22 @@ export function PracticeChat({ sessionId }: { sessionId: string }) {
 
       {practiceSession.status === "ACTIVE" ? (
         <form onSubmit={handleSend} className="flex flex-col gap-3">
-          {handsFreeActive && !sending && !transcribing && (
+          {voiceTurnActive && !sending && !transcribing && !simulationPaused && (
             <ListeningModeStatusBar
               mode={audioOutputMode}
-              listening={listening || recording}
+              listening={listening || recording || clientSpeaking}
               clientSpeaking={clientSpeaking}
               micMuted={micPaused}
               onInterrupt={interruptClient}
             />
+          )}
+          {simulationPaused && (
+            <div className="rounded-lg border border-slate-300 bg-slate-100 px-3 py-2.5">
+              <p className="text-sm text-slate-700">
+                <span className="font-medium">Paused.</span> Resume when you&apos;re ready to continue
+                the session.
+              </p>
+            </div>
           )}
           <div className="relative">
             <textarea
@@ -451,36 +504,17 @@ export function PracticeChat({ sessionId }: { sessionId: string }) {
               onChange={(event) => setInput(event.target.value)}
               placeholder={inputPlaceholder}
               rows={3}
-              className={`field-input ${voiceStatus.sttEnabled && !handsFreeActive ? "pr-12" : ""}`}
-              disabled={sending || transcribing || recording}
+              className="field-input"
+              disabled={sending || transcribing || recording || simulationPaused}
             />
-            {voiceStatus.sttEnabled && !handsFreeActive && (
-              <button
-                type="button"
-                onClick={() => void handleBatchMicToggle()}
-                disabled={sending || transcribing}
-                className={`absolute right-2 top-2 inline-flex h-9 w-9 items-center justify-center rounded-md border ${
-                  recording
-                    ? "border-red-300 bg-red-50 text-red-700"
-                    : "border-slate-300 bg-white text-slate-700 hover:bg-slate-50"
-                } disabled:opacity-50`}
-                aria-label={recording ? "Stop recording" : "Record therapist response"}
-                title={recording ? "Stop recording" : "Record therapist response"}
-              >
-                <MicIcon />
-              </button>
-            )}
           </div>
-          {handsFreeActive && listening && !recording && !transcribing && !sending && (
+          {voiceTurnActive && listening && !recording && !transcribing && !sending && !simulationPaused && (
             <p className="text-sm text-emerald-700">Listening… speak when you&apos;re ready.</p>
           )}
-          {handsFreeActive && recording && (
+          {voiceTurnActive && recording && !simulationPaused && (
             <p className="text-sm text-red-600">
               Recording… finish your thought naturally — we detect falling tone and pause to send.
             </p>
-          )}
-          {!handsFreeActive && recording && (
-            <p className="text-sm text-red-600">Recording… click the mic again to stop and transcribe.</p>
           )}
           {transcribing && (
             <p className="text-sm text-slate-600">Transcribing your response…</p>
@@ -488,13 +522,50 @@ export function PracticeChat({ sessionId }: { sessionId: string }) {
           {sending && (
             <p className="text-sm text-slate-600">Sending your response…</p>
           )}
-          <div className="flex gap-3">
+          {helpOpen && (
+            <div className="rounded-lg border border-indigo-200 bg-indigo-50/80 p-4">
+              <div className="flex items-start justify-between gap-3">
+                <p className="text-sm font-medium text-indigo-950">Supervisor suggestions</p>
+                <button
+                  type="button"
+                  onClick={() => setHelpOpen(false)}
+                  className="text-xs font-medium text-indigo-800 hover:text-indigo-950"
+                >
+                  Dismiss
+                </button>
+              </div>
+              {helpLoading ? (
+                <p className="mt-2 text-sm text-indigo-900">Loading suggestions…</p>
+              ) : (
+                <p className="mt-2 whitespace-pre-wrap text-sm leading-relaxed text-indigo-950">
+                  {helpText}
+                </p>
+              )}
+            </div>
+          )}
+          <div className="flex flex-wrap gap-3">
             <button
               type="submit"
-              disabled={sending || transcribing || recording || !input.trim()}
+              disabled={sending || transcribing || recording || simulationPaused || !input.trim()}
               className="rounded-md bg-slate-900 px-4 py-2 text-white hover:bg-slate-800 disabled:opacity-50"
             >
               {sending ? "Sending..." : "Send response"}
+            </button>
+            <button
+              type="button"
+              onClick={handleTogglePause}
+              disabled={ending || sending || transcribing}
+              className="rounded-md border border-slate-300 px-4 py-2 text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+            >
+              {simulationPaused ? "Resume" : "Pause"}
+            </button>
+            <button
+              type="button"
+              onClick={() => void handleGetHelp()}
+              disabled={helpLoading || ending || sending}
+              className="rounded-md border border-indigo-300 bg-indigo-50 px-4 py-2 text-indigo-900 hover:bg-indigo-100 disabled:opacity-50"
+            >
+              {helpLoading ? "Loading help…" : "Get help"}
             </button>
             <button
               type="button"

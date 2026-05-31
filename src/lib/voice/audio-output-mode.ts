@@ -19,8 +19,8 @@ export type AudioOutputModeDetails = {
 export const AUDIO_OUTPUT_MODE_DETAILS: Record<AudioOutputMode, AudioOutputModeDetails> = {
   headphones: {
     label: "Headphones",
-    micWhileClientSilent: "Your mic stays open.",
-    micWhileClientSpeaking: "Your mic stays open.",
+    micWhileClientSilent: "Your mic stays open — speak naturally and we send when your thought finishes.",
+    micWhileClientSpeaking: "Your mic stays open — start speaking anytime to interrupt the client.",
     howToInterrupt: "Start speaking — the client stops when you talk.",
     bestFor: "Headphones, earbuds, or any setup where the client cannot be heard in your mic.",
     speakersReminder: null,
@@ -82,6 +82,10 @@ export async function detectLikelyAudioOutputMode(): Promise<AudioOutputMode | n
 
 export function resolveDefaultAudioOutputMode(detected: AudioOutputMode | null): AudioOutputMode {
   return detected ?? "speakers";
+}
+
+export function shouldPauseMicDuringClient(mode: AudioOutputMode): boolean {
+  return mode === "speakers";
 }
 
 export function shouldEnableVoiceBargeIn(mode: AudioOutputMode): boolean {

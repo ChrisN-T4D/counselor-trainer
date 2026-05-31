@@ -148,7 +148,7 @@ export function ListeningModeStatusBar({
   micMuted,
   onInterrupt,
 }: ListeningModeStatusBarProps) {
-  if (!listening) {
+  if (!listening && !clientSpeaking) {
     return null;
   }
 
@@ -208,8 +208,9 @@ export function ListeningModeStatusBar({
   return (
     <div className="rounded-lg border border-emerald-200 bg-emerald-50/80 px-3 py-2.5">
       <p className="text-sm text-emerald-900">
-        <span className="font-medium">{details.label} mode · Mic live.</span> Speak anytime to
-        interrupt the client.
+        <span className="font-medium">{details.label} mode · Mic live.</span> Speak naturally —
+        we listen for falling tone at the end of a thought, then send automatically. Start speaking
+        anytime to interrupt the client.
       </p>
     </div>
   );
