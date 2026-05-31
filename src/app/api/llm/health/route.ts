@@ -1,10 +1,10 @@
 import { NextResponse } from "next/server";
-import { auth } from "@/auth";
 import { canAccessSupervisor } from "@/lib/auth/roles";
+import { getAuthSession } from "@/lib/auth/session";
 import { checkLlmHealth } from "@/lib/llm/health";
 
 export async function GET() {
-  const session = await auth();
+  const session = await getAuthSession();
   if (!session?.user?.id) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
