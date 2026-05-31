@@ -54,3 +54,26 @@ export async function getAdminScenarios() {
     },
   });
 }
+
+export async function getAdminUsers() {
+  return db.user.findMany({
+    orderBy: [{ role: "desc" }, { name: "asc" }],
+    select: {
+      id: true,
+      name: true,
+      email: true,
+      role: true,
+      createdAt: true,
+      _count: { select: { sessions: true, clientCases: true } },
+    },
+  });
+}
+
+export async function countAdmins(excludeUserId?: string) {
+  return db.user.count({
+    where: {
+      role: "ADMIN",
+      ...(excludeUserId ? { id: { not: excludeUserId } } : {}),
+    },
+  });
+}

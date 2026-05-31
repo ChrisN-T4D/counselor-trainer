@@ -13,8 +13,11 @@ export async function requireSupervisor() {
 
 export async function requireAdmin() {
   const session = await auth();
-  if (!session?.user?.id || !canAccessAdmin(session.user.role)) {
-    redirect("/dashboard");
+  if (!session?.user?.id) {
+    redirect("/login");
+  }
+  if (!canAccessAdmin(session.user.role)) {
+    redirect("/dashboard?error=admin_access");
   }
   return session;
 }

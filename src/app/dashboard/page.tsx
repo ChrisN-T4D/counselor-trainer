@@ -8,8 +8,13 @@ import { formatHours } from "@/lib/format";
 
 export const dynamic = "force-dynamic";
 
-export default async function DashboardPage() {
+export default async function DashboardPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ error?: string }>;
+}) {
   const session = await auth();
+  const params = await searchParams;
   const userId = session!.user!.id;
 
   const [totals, recentSessions, clientCases, activeSessions] = await Promise.all([
@@ -74,6 +79,13 @@ export default async function DashboardPage() {
           </h1>
           <p className="mt-1 text-slate-600">Track your practice and review progress.</p>
         </div>
+
+        {params.error === "admin_access" && (
+          <div className="mb-6 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+            Admin access requires the Admin role. Ask an existing admin to promote your account,
+            or update your role in the database if you are bootstrapping the first admin.
+          </div>
+        )}
 
         {(canAccessSupervisor(session?.user?.role) || canAccessAdmin(session?.user?.role)) && (
           <div className="mb-8 flex flex-wrap gap-3">
