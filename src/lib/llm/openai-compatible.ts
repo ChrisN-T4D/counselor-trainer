@@ -28,14 +28,24 @@ function assertLlmConfigured() {
   }
 }
 
-function createClient(timeoutMs: number) {
+function resolveClientTimeoutMs(timeoutMs?: number): number {
+  if (timeoutMs === 0) {
+    return 86_400_000;
+  }
+  if (timeoutMs != null && timeoutMs > 0) {
+    return timeoutMs;
+  }
+  return getLlmTimeoutMs();
+}
+
+function createClient(timeoutMs?: number) {
   assertLlmConfigured();
   const baseURL = normalizeOpenAiBaseUrl(process.env.OPENAI_BASE_URL!.trim());
 
   return new OpenAI({
     baseURL,
     apiKey: process.env.OPENAI_API_KEY?.trim() || "unused",
-    timeout: timeoutMs,
+    timeout: resolveClientTimeoutMs(timeoutMs),
   });
 }
 

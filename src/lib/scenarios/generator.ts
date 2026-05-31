@@ -5,7 +5,11 @@ import {
   getScenarioMaxTokens,
   getScenarioModel,
 } from "@/lib/llm/config";
-import type { LlmProvider } from "@/lib/llm/provider";
+import type { ChatMessage, CompleteOptions, LlmProvider } from "@/lib/llm/provider";
+import {
+  estimateDraftProgress,
+  type ScenarioGenerationProgress,
+} from "@/lib/scenarios/generation-progress";
 import { resolveClientVoiceIdForScenario } from "@/lib/voice/voice-catalog";
 
 export const scenarioGenerationInputSchema = z.object({
@@ -30,23 +34,23 @@ export const scenarioGenerationInputSchema = z.object({
 export type ScenarioGenerationInput = z.infer<typeof scenarioGenerationInputSchema>;
 
 export const generatedScenarioSchema = z.object({
-  title: z.string().min(8).max(100),
+  title: z.string().min(8).max(120),
   dsmCategory: z.string().min(3).max(200),
-  presentingProblem: z.string().min(30).max(600),
-  systemPrompt: z.string().min(80).max(2000),
-  objectives: z.array(z.string().min(8).max(200)).min(3).max(5),
+  presentingProblem: z.string().min(60).max(1500),
+  systemPrompt: z.string().min(120).max(6000),
+  objectives: z.array(z.string().min(8).max(240)).min(3).max(6),
   difficulty: z.string().min(1),
   clientGender: z.enum(["female", "male", "neutral"]),
   caseWriteup: z.object({
-    identifyingSnapshot: z.string().min(20),
-    presentingConcerns: z.string().min(20),
-    biologicalFactors: z.string().min(20),
-    psychologicalFactors: z.string().min(20),
-    socialSystemicFactors: z.string().min(20),
-    riskSafety: z.string().min(20),
-    workingHypotheses: z.string().min(20),
-    sessionGoals: z.string().min(20),
-    interventionConsiderations: z.string().min(20),
+    identifyingSnapshot: z.string().min(80),
+    presentingConcerns: z.string().min(80),
+    biologicalFactors: z.string().min(80),
+    psychologicalFactors: z.string().min(80),
+    socialSystemicFactors: z.string().min(80),
+    riskSafety: z.string().min(80),
+    workingHypotheses: z.string().min(80),
+    sessionGoals: z.string().min(80),
+    interventionConsiderations: z.string().min(80),
   }),
 });
 
@@ -103,12 +107,38 @@ Output JSON schema:
 
 Rules:
 - This write-up is hidden until after session completion.
-- Case details must be realistic and internally consistent.
+- Case details must be realistic, clinically plausible, and internally consistent.
 - Avoid definitive diagnosis language; use training-oriented conceptualization.
-- Make systemPrompt role-play ready for the client perspective in first person (under 400 words).
+- Make systemPrompt role-play ready for the client perspective in first person (roughly 400–800 words).
 - Set clientGender to match the primary client in identifyingSnapshot (female, male, or neutral if unclear).
-- Objectives: 3 concrete counseling skills (one short sentence each).
-- Keep each caseWriteup field to 2-3 sentences (roughly 40-120 characters each). Be concise.`;
+- Objectives: 3–5 concrete counseling skills (one sentence each).
+- Each caseWriteup field should be a thorough paragraph (roughly 4–8 sentences) with specific history, context, and clinical detail.
+- Prefer depth over brevity — this scenario should feel like a real intake or chart review.`;
+}
+
+function generationMessages(input: ScenarioGenerationInput): ChatMessage[] {
+  return [
+    {
+      role: "system",
+      content:
+        "You generate detailed counselor training scenarios. Output strict JSON only. Write rich, realistic biopsychosocial case material.",
+    },
+    {
+      role: "user",
+      content: buildGenerationPrompt(input),
+    },
+  ];
+}
+
+function generationOptions(): CompleteOptions {
+  return {
+    model: getScenarioModel(),
+    maxTokens: getScenarioMaxTokens(),
+    generation: true,
+    timeoutMs: getScenarioGenerationTimeoutMs(),
+    jsonMode: true,
+    temperature: 0.6,
+  };
 }
 
 function parseLlmJson(content: string): unknown {
@@ -130,39 +160,42 @@ function parseLlmJson(content: string): unknown {
   }
 }
 
-export async function generateScenarioFromSettings(
+export async function generateScenarioFromSettingsStreaming(
   llm: LlmProvider,
   input: ScenarioGenerationInput,
+  onProgress: (update: ScenarioGenerationProgress) => void,
 ): Promise<GeneratedScenarioWithVoice> {
-  const prompt = buildGenerationPrompt(input);
-  const raw = await llm.complete(
-    [
-      {
-        role: "system",
-        content:
-          "You generate counselor training scenarios. Output strict JSON only. Be concise in every field.",
-      },
-      {
-        role: "user",
-        content: prompt,
-      },
-    ],
-    {
-      model: getScenarioModel(),
-      maxTokens: getScenarioMaxTokens(),
-      generation: true,
-      timeoutMs: getScenarioGenerationTimeoutMs(),
-      jsonMode: true,
-      temperature: 0.6,
-    },
-  );
+  const options = generationOptions();
+  const maxTokens = options.maxTokens ?? getScenarioMaxTokens();
+  let accumulated = "";
 
-  const parsed = parseLlmJson(raw);
+  onProgress({ percent: 2, stage: "drafting" });
+
+  for await (const delta of llm.stream(generationMessages(input), options)) {
+    accumulated += delta;
+    onProgress({
+      percent: estimateDraftProgress(accumulated.length, maxTokens),
+      stage: "drafting",
+    });
+  }
+
+  onProgress({ percent: 88, stage: "parsing" });
+
+  const parsed = parseLlmJson(accumulated);
   const scenario = generatedScenarioSchema.parse(parsed);
   const clientVoiceId = resolveClientVoiceIdForScenario({
     ageGroup: input.ageGroup,
     generationSettings: { clientGender: scenario.clientGender },
   });
 
+  onProgress({ percent: 92, stage: "parsing" });
+
   return { ...scenario, clientVoiceId };
+}
+
+export async function generateScenarioFromSettings(
+  llm: LlmProvider,
+  input: ScenarioGenerationInput,
+): Promise<GeneratedScenarioWithVoice> {
+  return generateScenarioFromSettingsStreaming(llm, input, () => undefined);
 }

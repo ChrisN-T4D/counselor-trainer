@@ -2,14 +2,10 @@ import { NextResponse } from "next/server";
 import { auth } from "@/auth";
 import { db } from "@/lib/db";
 import { createLlmProvider } from "@/lib/llm/factory";
-import {
-  getLlmConfigIssues,
-  getScenarioGenerationTimeoutMs,
-  llmConfigErrorMessage,
-} from "@/lib/llm/config";
+import { getLlmConfigIssues, llmConfigErrorMessage } from "@/lib/llm/config";
 import { classifyLlmError } from "@/lib/llm/errors";
 import {
-  generateScenarioFromSettings,
+  generateScenarioFromSettingsStreaming,
   scenarioGenerationInputSchema,
 } from "@/lib/scenarios/generator";
 import { PUBLIC_SCENARIO_SELECT } from "@/lib/scenarios/public-scenario";
@@ -24,24 +20,10 @@ function acuityFromUrgency(sessionUrgency: number) {
   return "high";
 }
 
-export const maxDuration = 300;
-
-const GENERATION_TIMEOUT_MS = getScenarioGenerationTimeoutMs();
-
-async function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
-  let timeoutId: NodeJS.Timeout | undefined;
-  const timeoutPromise = new Promise<never>((_, reject) => {
-    timeoutId = setTimeout(() => reject(new Error("Scenario generation timed out")), timeoutMs);
-  });
-
-  try {
-    return await Promise.race([promise, timeoutPromise]);
-  } finally {
-    if (timeoutId) {
-      clearTimeout(timeoutId);
-    }
-  }
-}
+type StreamEvent =
+  | { type: "progress"; percent: number; stage: "drafting" | "parsing" | "saving" }
+  | { type: "complete"; percent: 100; scenario: unknown }
+  | { type: "error"; error: string; code: string };
 
 export async function POST(request: Request) {
   const session = await auth();
@@ -64,41 +46,61 @@ export async function POST(request: Request) {
   }
 
   const llm = createLlmProvider();
-  let generated;
-  try {
-    generated = await withTimeout(
-      generateScenarioFromSettings(llm, parsedInput.data),
-      GENERATION_TIMEOUT_MS,
-    );
-  } catch (error) {
-    console.error("Scenario generation error:", error);
-    const classified = classifyLlmError(error);
-    return NextResponse.json(
-      { error: classified.message, code: classified.code },
-      { status: classified.status },
-    );
-  }
+  const encoder = new TextEncoder();
 
-  const created = await db.scenario.create({
-    data: {
-      title: generated.title,
-      contextType: parsedInput.data.contextType,
-      dsmCategory: generated.dsmCategory,
-      presentingProblem: generated.presentingProblem,
-      systemPrompt: generated.systemPrompt,
-      objectives: generated.objectives,
-      difficulty: parsedInput.data.difficulty,
-      ageGroup: parsedInput.data.ageGroup,
-      acuityLevel: acuityFromUrgency(parsedInput.data.sessionUrgency),
-      referralSource: parsedInput.data.referralSource,
-      sessionParticipants: parsedInput.data.participants,
-      generationSettings: parsedInput.data,
-      caseWriteup: generated.caseWriteup,
-      clientVoiceId: generated.clientVoiceId,
-      isTemplate: false,
+  const stream = new ReadableStream<Uint8Array>({
+    async start(controller) {
+      const send = (event: StreamEvent) => {
+        controller.enqueue(encoder.encode(`${JSON.stringify(event)}\n`));
+      };
+
+      try {
+        const generated = await generateScenarioFromSettingsStreaming(
+          llm,
+          parsedInput.data,
+          (update) => {
+            send({ type: "progress", percent: update.percent, stage: update.stage });
+          },
+        );
+
+        send({ type: "progress", percent: 96, stage: "saving" });
+
+        const created = await db.scenario.create({
+          data: {
+            title: generated.title,
+            contextType: parsedInput.data.contextType,
+            dsmCategory: generated.dsmCategory,
+            presentingProblem: generated.presentingProblem,
+            systemPrompt: generated.systemPrompt,
+            objectives: generated.objectives,
+            difficulty: parsedInput.data.difficulty,
+            ageGroup: parsedInput.data.ageGroup,
+            acuityLevel: acuityFromUrgency(parsedInput.data.sessionUrgency),
+            referralSource: parsedInput.data.referralSource,
+            sessionParticipants: parsedInput.data.participants,
+            generationSettings: parsedInput.data,
+            caseWriteup: generated.caseWriteup,
+            clientVoiceId: generated.clientVoiceId,
+            isTemplate: false,
+          },
+          select: PUBLIC_SCENARIO_SELECT,
+        });
+
+        send({ type: "complete", percent: 100, scenario: created });
+      } catch (error) {
+        console.error("Scenario generation error:", error);
+        const classified = classifyLlmError(error);
+        send({ type: "error", error: classified.message, code: classified.code });
+      } finally {
+        controller.close();
+      }
     },
-    select: PUBLIC_SCENARIO_SELECT,
   });
 
-  return NextResponse.json({ scenario: created }, { status: 201 });
+  return new Response(stream, {
+    headers: {
+      "Content-Type": "application/x-ndjson; charset=utf-8",
+      "Cache-Control": "no-cache, no-transform",
+    },
+  });
 }

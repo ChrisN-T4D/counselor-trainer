@@ -31,7 +31,7 @@ export function classifyLlmError(error: unknown): {
     return {
       status: 504,
       message:
-        "Scenario generation timed out. Use a faster model (e.g. llama3.2:3b), set OPENAI_SCENARIO_MODEL, or increase SCENARIO_GENERATION_TIMEOUT_MS.",
+        "Scenario generation timed out. Set SCENARIO_GENERATION_TIMEOUT_MS=0 for no limit, or use a faster OPENAI_SCENARIO_MODEL.",
       code: "llm_timeout",
     };
   }
@@ -57,7 +57,7 @@ export function classifyLlmError(error: unknown): {
     return {
       status: 504,
       message:
-        "Scenario generation timed out. Use a faster model (e.g. llama3.2:3b), set OPENAI_SCENARIO_MODEL, or increase SCENARIO_GENERATION_TIMEOUT_MS.",
+        "Scenario generation timed out. Set SCENARIO_GENERATION_TIMEOUT_MS=0 for no limit, or use a faster OPENAI_SCENARIO_MODEL.",
       code: "llm_timeout",
     };
   }

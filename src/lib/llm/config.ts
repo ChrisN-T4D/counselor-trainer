@@ -78,14 +78,19 @@ export function shouldDisableReasoningForChat(model: string): boolean {
   return false;
 }
 
+/** 0 = no timeout (scenario generation may run as long as the model needs). */
 export function getScenarioGenerationTimeoutMs(): number {
-  const value = Number(process.env.SCENARIO_GENERATION_TIMEOUT_MS ?? 180_000);
-  return Number.isFinite(value) && value > 0 ? value : 180_000;
+  const raw = process.env.SCENARIO_GENERATION_TIMEOUT_MS?.trim().toLowerCase();
+  if (!raw || raw === "0" || raw === "none" || raw === "off" || raw === "unlimited") {
+    return 0;
+  }
+  const value = Number(raw);
+  return Number.isFinite(value) && value > 0 ? value : 0;
 }
 
 export function getScenarioMaxTokens(): number {
-  const value = Number(process.env.SCENARIO_MAX_TOKENS ?? 4096);
-  return Number.isFinite(value) && value > 500 ? value : 4096;
+  const value = Number(process.env.SCENARIO_MAX_TOKENS ?? 8192);
+  return Number.isFinite(value) && value > 500 ? value : 8192;
 }
 
 /** Optional faster/smaller model for one-shot scenario JSON (falls back to OPENAI_MODEL). */

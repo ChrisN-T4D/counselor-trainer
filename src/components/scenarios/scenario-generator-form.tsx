@@ -28,6 +28,77 @@ type Props = {
   onGenerated: (scenario: ScenarioListItem) => void;
 };
 
+type GenerationStage = "drafting" | "parsing" | "saving";
+
+function stageLabel(stage: GenerationStage | null) {
+  switch (stage) {
+    case "drafting":
+      return "Writing detailed case material…";
+    case "parsing":
+      return "Validating scenario structure…";
+    case "saving":
+      return "Saving scenario…";
+    default:
+      return "Starting generation…";
+  }
+}
+
+async function readGenerationStream(
+  response: Response,
+  onProgress: (percent: number, stage: GenerationStage) => void,
+): Promise<ScenarioListItem> {
+  if (!response.body) {
+    throw new Error("No response body from server");
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let scenario: ScenarioListItem | null = null;
+  let streamError: string | null = null;
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) {
+      break;
+    }
+
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split("\n");
+    buffer = lines.pop() ?? "";
+
+    for (const line of lines) {
+      if (!line.trim()) {
+        continue;
+      }
+
+      const event = JSON.parse(line) as
+        | { type: "progress"; percent: number; stage: GenerationStage }
+        | { type: "complete"; scenario: ScenarioListItem }
+        | { type: "error"; error: string };
+
+      if (event.type === "progress") {
+        onProgress(event.percent, event.stage);
+      } else if (event.type === "complete") {
+        onProgress(100, "saving");
+        scenario = event.scenario;
+      } else if (event.type === "error") {
+        streamError = event.error;
+      }
+    }
+  }
+
+  if (streamError) {
+    throw new Error(streamError);
+  }
+
+  if (!scenario) {
+    throw new Error("Generation finished without a scenario");
+  }
+
+  return scenario;
+}
+
 export function ScenarioGeneratorForm({ onGenerated }: Props) {
   const [contextType, setContextType] =
     useState<ScenarioListItem["contextType"]>("INDIVIDUAL");
@@ -45,6 +116,8 @@ export function ScenarioGeneratorForm({ onGenerated }: Props) {
   const [sessionUrgency, setSessionUrgency] = useState(3);
   const [focusAreas, setFocusAreas] = useState("");
   const [loading, setLoading] = useState(false);
+  const [progress, setProgress] = useState(0);
+  const [stage, setStage] = useState<GenerationStage | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const participants = useMemo(
@@ -55,6 +128,8 @@ export function ScenarioGeneratorForm({ onGenerated }: Props) {
   async function handleGenerate(event: React.FormEvent) {
     event.preventDefault();
     setLoading(true);
+    setProgress(0);
+    setStage(null);
     setError(null);
 
     try {
@@ -78,17 +153,25 @@ export function ScenarioGeneratorForm({ onGenerated }: Props) {
       });
 
       if (!response.ok) {
-        const data = (await response.json()) as { error?: string; code?: string };
+        const data = (await response.json()) as { error?: string };
         setError(data.error ?? "Failed to generate scenario");
         return;
       }
 
-      const data = (await response.json()) as { scenario: ScenarioListItem };
-      onGenerated(data.scenario);
-    } catch {
-      setError("Could not reach the server. Please try again.");
+      const scenario = await readGenerationStream(response, (percent, nextStage) => {
+        setProgress(percent);
+        setStage(nextStage);
+      });
+      onGenerated(scenario);
+    } catch (generateError) {
+      setError(
+        generateError instanceof Error
+          ? generateError.message
+          : "Could not reach the server. Please try again.",
+      );
     } finally {
       setLoading(false);
+      setStage(null);
     }
   }
 
@@ -233,16 +316,34 @@ export function ScenarioGeneratorForm({ onGenerated }: Props) {
         Participants for this context: {participants.join(", ")}
       </p>
       <p className="mt-2 text-xs text-slate-500">
-        Generation may take 1–3 minutes on slower models. For faster results, use a smaller
-        model via OPENAI_SCENARIO_MODEL on the server.
+        Detailed scenarios can take several minutes on slower models. Progress is estimated from
+        output length — there is no hard time limit.
       </p>
+
+      {loading && (
+        <div className="mt-4 space-y-2 rounded-md border border-slate-200 bg-slate-50 p-4">
+          <div className="flex items-center justify-between text-sm">
+            <span className="font-medium text-slate-800">{stageLabel(stage)}</span>
+            <span className="tabular-nums text-slate-600">{progress}%</span>
+          </div>
+          <div className="h-2 overflow-hidden rounded-full bg-slate-200">
+            <div
+              className="h-full rounded-full bg-slate-900 transition-[width] duration-300 ease-out"
+              style={{ width: `${Math.max(progress, 2)}%` }}
+            />
+          </div>
+          <p className="text-xs text-slate-500">
+            Estimated progress — generation continues until the model finishes.
+          </p>
+        </div>
+      )}
 
       <button
         type="submit"
         disabled={loading}
         className="mt-4 rounded-md bg-slate-900 px-4 py-2 text-sm text-white hover:bg-slate-800 disabled:opacity-50"
       >
-        {loading ? "Generating scenario (please wait)..." : "Generate scenario"}
+        {loading ? "Generating scenario…" : "Generate scenario"}
       </button>
 
       {error && <p className="mt-3 text-sm text-red-600">{error}</p>}
