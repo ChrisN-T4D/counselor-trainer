@@ -199,7 +199,7 @@ export function ListeningModeStatusBar({
       <div className="rounded-lg border border-emerald-200 bg-emerald-50/80 px-3 py-2.5">
         <p className="text-sm text-emerald-900">
           <span className="font-medium">{details.label} mode · Mic live.</span> Speak naturally —
-          we detect when you&apos;re done and send your response automatically.
+          we listen for falling tone at the end of a thought, then send automatically.
         </p>
       </div>
     );

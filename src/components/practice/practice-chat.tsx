@@ -475,7 +475,9 @@ export function PracticeChat({ sessionId }: { sessionId: string }) {
             <p className="text-sm text-emerald-700">Listening… speak when you&apos;re ready.</p>
           )}
           {handsFreeActive && recording && (
-            <p className="text-sm text-red-600">Recording… pause briefly when you&apos;re done.</p>
+            <p className="text-sm text-red-600">
+              Recording… finish your thought naturally — we detect falling tone and pause to send.
+            </p>
           )}
           {!handsFreeActive && recording && (
             <p className="text-sm text-red-600">Recording… click the mic again to stop and transcribe.</p>
