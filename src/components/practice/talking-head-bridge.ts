@@ -1,8 +1,8 @@
 "use client";
 
-import type { AvatarCatalogEntry } from "@/lib/visual/avatar-catalog";
+import { FALLBACK_AVATAR_URL, type AvatarCatalogEntry } from "@/lib/visual/avatar-catalog";
 import type { AvatarMood } from "@/lib/visual/types";
-import { estimateWordTimings } from "@/lib/visual/word-timings";
+import { estimateWordTimings, type WordTimings } from "@/lib/visual/word-timings";
 
 type TalkingHeadInstance = {
   showAvatar: (avatar: Record<string, unknown>, onprogress?: ((url: string, event: ProgressEvent) => void) | null) => Promise<void>;
@@ -16,6 +16,9 @@ type TalkingHeadInstance = {
   dispose: () => void;
   isSpeaking?: boolean;
   isAudioPlaying?: boolean;
+  // Map of language -> lip-sync processor. Normally populated by TalkingHead's own
+  // dynamic import of ./lipsync-<lang>.mjs, which fails under the Next.js bundler.
+  lipsync: Record<string, unknown>;
 };
 
 type TalkingHeadConstructor = new (
@@ -32,6 +35,7 @@ export class TalkingHeadBridge {
   private loadError: string | null = null;
   private onStateChange: ((state: TalkingHeadBridgeState, error?: string | null) => void) | null = null;
   private speakDoneTimer: number | null = null;
+  private speakDoneResolve: (() => void) | null = null;
 
   setOnStateChange(handler: (state: TalkingHeadBridgeState, error?: string | null) => void) {
     this.onStateChange = handler;
@@ -63,9 +67,14 @@ export class TalkingHeadBridge {
     this.container = container;
     this.setState("loading");
 
-    const { TalkingHead } = (await import("@met4citizen/talkinghead/modules/talkinghead.mjs")) as {
-      TalkingHead: TalkingHeadConstructor;
-    };
+    const [{ TalkingHead }, { LipsyncEn }] = await Promise.all([
+      import("@met4citizen/talkinghead/modules/talkinghead.mjs") as Promise<{
+        TalkingHead: TalkingHeadConstructor;
+      }>,
+      import("@met4citizen/talkinghead/modules/lipsync-en.mjs") as Promise<{
+        LipsyncEn: new () => unknown;
+      }>,
+    ]);
 
     container.replaceChildren();
     const mount = document.createElement("div");
@@ -76,7 +85,9 @@ export class TalkingHeadBridge {
 
     this.head = new TalkingHead(mount, {
       lipsyncLang: "en",
-      lipsyncModules: ["en"],
+      // Empty: TalkingHead would otherwise dynamic-import "./lipsync-en.mjs" at runtime,
+      // which the Next.js/webpack bundle can't resolve. We inject the processor below.
+      lipsyncModules: [],
       cameraView: "upper",
       cameraRotateEnable: false,
       cameraPanEnable: false,
@@ -84,6 +95,11 @@ export class TalkingHeadBridge {
       avatarMood: "neutral",
       modelPixelRatio: Math.min(window.devicePixelRatio, 2),
     });
+
+    // Statically-bundled English lip-sync processor (replaces the broken dynamic import),
+    // so the avatar's mouth animates to speech audio.
+    this.head.lipsync = this.head.lipsync ?? {};
+    this.head.lipsync.en = new LipsyncEn();
   }
 
   async loadAvatar(entry: AvatarCatalogEntry) {
@@ -103,6 +119,23 @@ export class TalkingHeadBridge {
 
       this.setState("ready");
     } catch (error) {
+      // The configured model URL failed (e.g. unreachable RPM avatar). Fall back to the
+      // TalkingHead-verified avatar so the panel still renders something usable.
+      if (entry.modelUrl !== FALLBACK_AVATAR_URL) {
+        try {
+          await this.head.showAvatar({
+            url: FALLBACK_AVATAR_URL,
+            body: entry.body,
+            lipsyncLang: "en",
+            avatarMood: entry.defaultMood,
+          });
+          this.setState("ready");
+          return;
+        } catch {
+          // fall through to the error state below
+        }
+      }
+
       const message =
         error instanceof Error
           ? error.message
@@ -119,11 +152,23 @@ export class TalkingHeadBridge {
     }
   }
 
+  /** Resolve a pending speak() promise so awaiters (e.g. sequential playback) unblock. */
+  private resolveSpeakDone() {
+    if (this.speakDoneResolve) {
+      const resolve = this.speakDoneResolve;
+      this.speakDoneResolve = null;
+      resolve();
+    }
+  }
+
   private waitForSpeechEnd(durationMs: number) {
     this.clearSpeakTimer();
+    this.resolveSpeakDone();
     return new Promise<void>((resolve) => {
+      this.speakDoneResolve = resolve;
       this.speakDoneTimer = window.setTimeout(() => {
         this.speakDoneTimer = null;
+        this.speakDoneResolve = null;
         if (this.state === "speaking") {
           this.setState("ready");
         }
@@ -132,7 +177,7 @@ export class TalkingHeadBridge {
     });
   }
 
-  async speakFromBlob(blob: Blob, text: string, mood: AvatarMood) {
+  async speakFromBlob(blob: Blob, text: string, mood: AvatarMood, wordTimings?: WordTimings) {
     if (!this.head) {
       throw new Error("TalkingHead is not initialized");
     }
@@ -147,7 +192,11 @@ export class TalkingHeadBridge {
     try {
       const audioBuffer = await audioContext.decodeAudioData(arrayBuffer.slice(0));
       const durationMs = audioBuffer.duration * 1000;
-      const { words, wtimes, wdurations } = estimateWordTimings(text, durationMs);
+      // Prefer precise TTS-provided alignment; fall back to a rough estimate.
+      const { words, wtimes, wdurations } =
+        wordTimings && wordTimings.words.length > 0
+          ? wordTimings
+          : estimateWordTimings(text, durationMs);
 
       this.head.speakAudio(
         {
@@ -171,10 +220,12 @@ export class TalkingHeadBridge {
     if (this.state === "speaking") {
       this.setState("ready");
     }
+    this.resolveSpeakDone();
   }
 
   destroy() {
     this.clearSpeakTimer();
+    this.resolveSpeakDone();
     this.head?.dispose();
     this.head = null;
     this.container = null;

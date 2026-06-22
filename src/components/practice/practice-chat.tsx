@@ -4,6 +4,7 @@ import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   ClientPresencePanel,
+  type AvatarController,
   type AvatarPlaybackHandle,
 } from "@/components/practice/client-presence-panel";
 import { usePracticeVoice } from "@/components/practice/use-practice-voice";
@@ -14,13 +15,24 @@ import {
   getAvatarCatalogEntry,
   resolveClientAvatarKeyForScenario,
 } from "@/lib/visual/avatar-catalog";
+import type { PublicParticipant } from "@/lib/sessions/participants";
 import type { VisualStatus } from "@/lib/visual/types";
 import { formatClientTextForDisplay } from "@/lib/voice/delivery-tags";
+
+const SINGLE_AVATAR_KEY = "__single__";
+
+const SPEAKER_ACCENTS = [
+  { name: "text-rose-700", border: "border-l-rose-400" },
+  { name: "text-sky-700", border: "border-l-sky-400" },
+  { name: "text-violet-700", border: "border-l-violet-400" },
+  { name: "text-amber-700", border: "border-l-amber-400" },
+];
 
 type Message = {
   id: string;
   role: "CLIENT" | "THERAPIST" | "SYSTEM";
   content: string;
+  speaker?: string | null;
   sequence: number;
   createdAt: string;
 };
@@ -38,6 +50,7 @@ type PracticeSession = {
     ageGroup?: string;
     clientAvatarKey?: string | null;
     generationSettings?: unknown;
+    participants?: PublicParticipant[] | null;
   };
   messages: Message[];
 };
@@ -45,7 +58,7 @@ type PracticeSession = {
 type StreamEvent =
   | { type: "therapist"; message: Message }
   | { type: "delta"; content: string }
-  | { type: "done"; clientMessage: Message }
+  | { type: "done"; clientMessage?: Message; clientMessages?: Message[] }
   | { type: "error"; error: string; code?: string };
 
 function PlayIcon() {
@@ -84,15 +97,37 @@ export function PracticeChat({ sessionId }: { sessionId: string }) {
     provider: "noop",
   });
   const voiceTurnStartedRef = useRef(false);
-  const avatarPlaybackRef = useRef<AvatarPlaybackHandle | null>(null);
+  const avatarHandlesRef = useRef<Map<string, AvatarPlaybackHandle>>(new Map());
+  const avatarControllerRef = useRef<AvatarController>({
+    getHandle: (speaker) => {
+      const map = avatarHandlesRef.current;
+      if (speaker && map.has(speaker)) {
+        return map.get(speaker) ?? null;
+      }
+      return map.get(SINGLE_AVATAR_KEY) ?? map.values().next().value ?? null;
+    },
+    stopAll: () => {
+      for (const handle of avatarHandlesRef.current.values()) {
+        handle.stop();
+      }
+    },
+  });
 
   const { viewMode, setViewMode, hydrated: viewModeHydrated } = usePracticeViewMode(
     visualStatus.visualEnabled,
   );
 
-  const handleAvatarReady = useCallback((handle: AvatarPlaybackHandle | null) => {
-    avatarPlaybackRef.current = handle;
-  }, []);
+  // Single stable callback; each panel reports its own key so we can route playback per speaker.
+  const handleAvatarReady = useCallback(
+    (key: string, handle: AvatarPlaybackHandle | null) => {
+      if (handle) {
+        avatarHandlesRef.current.set(key, handle);
+      } else {
+        avatarHandlesRef.current.delete(key);
+      }
+    },
+    [],
+  );
 
   const {
     voiceStatus,
@@ -111,6 +146,7 @@ export function PracticeChat({ sessionId }: { sessionId: string }) {
     micPaused,
     simulationPaused,
     playClientMessage,
+    playClientMessages,
     setSessionActive,
     interruptClient,
     setOnAutoSend,
@@ -122,7 +158,7 @@ export function PracticeChat({ sessionId }: { sessionId: string }) {
   } = usePracticeVoice(sessionId, {
     viewMode: viewModeHydrated ? viewMode : "text",
     visualEnabled: visualStatus.visualEnabled,
-    avatarPlaybackRef,
+    avatarControllerRef,
   });
 
   useEffect(() => {
@@ -144,16 +180,20 @@ export function PracticeChat({ sessionId }: { sessionId: string }) {
 
   useEffect(() => {
     async function loadSession() {
-      const response = await fetch(`/api/sessions/${sessionId}`);
-      if (!response.ok) {
-        setError("Could not load session");
-        setLoading(false);
-        return;
-      }
+      try {
+        const response = await fetch(`/api/sessions/${sessionId}`);
+        if (!response.ok) {
+          setError("Could not load session");
+          return;
+        }
 
-      const data = (await response.json()) as { session: PracticeSession };
-      setPracticeSession(data.session);
-      setLoading(false);
+        const data = (await response.json()) as { session: PracticeSession };
+        setPracticeSession(data.session);
+      } catch {
+        setError("Could not reach the server. Is the app still running?");
+      } finally {
+        setLoading(false);
+      }
     }
 
     loadSession();
@@ -211,7 +251,7 @@ export function PracticeChat({ sessionId }: { sessionId: string }) {
       const decoder = new TextDecoder();
       let buffer = "";
       let therapistMessage: Message | null = null;
-      let clientMessage: Message | null = null;
+      let clientMessages: Message[] = [];
       let accumulated = "";
 
       try {
@@ -243,22 +283,28 @@ export function PracticeChat({ sessionId }: { sessionId: string }) {
               accumulated += event.content;
               setStreamingClientText(accumulated);
             } else if (event.type === "done") {
-              clientMessage = event.clientMessage;
+              clientMessages = event.clientMessages ?? (event.clientMessage ? [event.clientMessage] : []);
             } else if (event.type === "error") {
               throw new Error(event.error);
             }
           }
         }
 
-        if (clientMessage) {
+        if (clientMessages.length > 0) {
           setPracticeSession((current) =>
             current
-              ? { ...current, messages: [...current.messages, clientMessage!] }
+              ? { ...current, messages: [...current.messages, ...clientMessages] }
               : current,
           );
 
           if (voiceStatus.ttsEnabled) {
-            void playClientMessage(clientMessage.id, clientMessage.content);
+            void playClientMessages(
+              clientMessages.map((message) => ({
+                id: message.id,
+                text: message.content,
+                speaker: message.speaker ?? null,
+              })),
+            );
           } else {
             resumeVoiceTurnAfterSend();
           }
@@ -278,7 +324,7 @@ export function PracticeChat({ sessionId }: { sessionId: string }) {
     },
     [
       pauseVoiceTurnForSend,
-      playClientMessage,
+      playClientMessages,
       practiceSession?.status,
       resumeVoiceTurnAfterSend,
       sending,
@@ -307,10 +353,26 @@ export function PracticeChat({ sessionId }: { sessionId: string }) {
     }
 
     voiceTurnStartedRef.current = true;
-    const lastMessage = practiceSession.messages.at(-1);
 
-    if (lastMessage?.role === "CLIENT" && voiceStatus.ttsEnabled) {
-      void playClientMessage(lastMessage.id, lastMessage.content);
+    // Replay the most recent client turn (which may be several attributed segments).
+    const messages = practiceSession.messages;
+    const trailing: Message[] = [];
+    for (let i = messages.length - 1; i >= 0; i--) {
+      if (messages[i].role === "CLIENT") {
+        trailing.unshift(messages[i]);
+      } else {
+        break;
+      }
+    }
+
+    if (trailing.length > 0 && voiceStatus.ttsEnabled) {
+      void playClientMessages(
+        trailing.map((message) => ({
+          id: message.id,
+          text: message.content,
+          speaker: message.speaker ?? null,
+        })),
+      );
       return;
     }
 
@@ -318,7 +380,7 @@ export function PracticeChat({ sessionId }: { sessionId: string }) {
   }, [
     beginVoiceTurn,
     loading,
-    playClientMessage,
+    playClientMessages,
     practiceSession,
     simulationPaused,
     voiceStatus.ttsEnabled,
@@ -393,7 +455,12 @@ export function PracticeChat({ sessionId }: { sessionId: string }) {
     router.refresh();
   }
 
-  function renderPlayButton(messageId: string, text: string, label: string) {
+  function renderPlayButton(
+    messageId: string,
+    text: string,
+    label: string,
+    speaker: string | null = null,
+  ) {
     if (!voiceStatus.ttsEnabled) {
       return null;
     }
@@ -404,7 +471,7 @@ export function PracticeChat({ sessionId }: { sessionId: string }) {
     return (
       <button
         type="button"
-        onClick={() => playClientMessage(messageId, text)}
+        onClick={() => playClientMessage(messageId, text, speaker)}
         disabled={isLoading || !text.trim() || simulationPaused}
         className="inline-flex items-center gap-1 rounded-md border border-slate-200 px-2 py-1 text-xs text-slate-600 hover:bg-slate-50 disabled:opacity-50"
         aria-label={isPlaying ? `Stop ${label}` : `Play ${label}`}
@@ -442,14 +509,28 @@ export function PracticeChat({ sessionId }: { sessionId: string }) {
     ? "Type a response instead, or just speak when the mic is live…"
     : "Respond as the therapist...";
 
-  const avatarKey = practiceSession
-    ? resolveClientAvatarKeyForScenario({
-        clientAvatarKey: practiceSession.scenario.clientAvatarKey,
-        ageGroup: practiceSession.scenario.ageGroup,
-        generationSettings: practiceSession.scenario.generationSettings,
-      })
-    : null;
-  const avatarEntry = avatarKey ? getAvatarCatalogEntry(avatarKey) ?? null : null;
+  const participants =
+    practiceSession.scenario.participants && practiceSession.scenario.participants.length > 0
+      ? practiceSession.scenario.participants
+      : null;
+
+  const avatarKey = resolveClientAvatarKeyForScenario({
+    clientAvatarKey: practiceSession.scenario.clientAvatarKey,
+    ageGroup: practiceSession.scenario.ageGroup,
+    generationSettings: practiceSession.scenario.generationSettings,
+  });
+  const avatarEntry = getAvatarCatalogEntry(avatarKey) ?? null;
+
+  const speakerIndex = new Map((participants ?? []).map((p, index) => [p.key, index]));
+  const speakerName = (speaker?: string | null) =>
+    participants?.find((p) => p.key === speaker)?.name ?? null;
+  const speakerAccent = (speaker?: string | null) => {
+    const index = speaker ? speakerIndex.get(speaker) : undefined;
+    return index === undefined ? null : SPEAKER_ACCENTS[index % SPEAKER_ACCENTS.length];
+  };
+
+  const playingSpeaker =
+    practiceSession.messages.find((message) => message.id === playingMessageId)?.speaker ?? null;
 
   const presenceLabel = clientSpeaking
     ? "Speaking"
@@ -501,13 +582,29 @@ export function PracticeChat({ sessionId }: { sessionId: string }) {
         )}
       </div>
 
-      {showAvatarPanel && (
-        <ClientPresencePanel
-          avatarEntry={avatarEntry}
-          presenceLabel={presenceLabel}
-          onReady={handleAvatarReady}
-        />
-      )}
+      {showAvatarPanel &&
+        (participants ? (
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            {participants.map((participant) => (
+              <ClientPresencePanel
+                key={participant.key}
+                panelKey={participant.key}
+                avatarEntry={getAvatarCatalogEntry(participant.avatarKey) ?? avatarEntry}
+                title={participant.name}
+                active={playingSpeaker === participant.key}
+                presenceLabel={playingSpeaker === participant.key ? "Speaking" : presenceLabel}
+                onReady={handleAvatarReady}
+              />
+            ))}
+          </div>
+        ) : (
+          <ClientPresencePanel
+            panelKey={SINGLE_AVATAR_KEY}
+            avatarEntry={avatarEntry}
+            presenceLabel={presenceLabel}
+            onReady={handleAvatarReady}
+          />
+        ))}
 
       <div className="relative min-h-[420px] rounded-lg border border-slate-200 bg-slate-50 p-4">
         {simulationPaused && (
@@ -521,27 +618,35 @@ export function PracticeChat({ sessionId }: { sessionId: string }) {
           </div>
         )}
         <div className="space-y-3">
-          {practiceSession.messages.map((message) => (
-            <div
-              key={message.id}
-              className={`max-w-[85%] rounded-lg px-3 py-2 text-sm ${
-                message.role === "THERAPIST"
-                  ? "ml-auto bg-slate-900 text-white"
-                  : "bg-white text-slate-900 shadow-sm"
-              }`}
-            >
-              <div className="mb-1 flex items-center justify-between gap-2">
-                <p className="text-xs font-medium opacity-70">
-                  {message.role === "THERAPIST" ? "You (Therapist)" : "Client"}
+          {practiceSession.messages.map((message) => {
+            const accent = message.role === "CLIENT" ? speakerAccent(message.speaker) : null;
+            const name = message.role === "CLIENT" ? speakerName(message.speaker) : null;
+            return (
+              <div
+                key={message.id}
+                className={`max-w-[85%] rounded-lg px-3 py-2 text-sm ${
+                  message.role === "THERAPIST"
+                    ? "ml-auto bg-slate-900 text-white"
+                    : `bg-white text-slate-900 shadow-sm ${accent ? `border-l-4 ${accent.border}` : ""}`
+                }`}
+              >
+                <div className="mb-1 flex items-center justify-between gap-2">
+                  <p
+                    className={`text-xs font-medium ${
+                      message.role === "CLIENT" && accent ? accent.name : "opacity-70"
+                    }`}
+                  >
+                    {message.role === "THERAPIST" ? "You (Therapist)" : name ?? "Client"}
+                  </p>
+                  {message.role === "CLIENT" &&
+                    renderPlayButton(message.id, message.content, name ?? "client message", message.speaker)}
+                </div>
+                <p className="whitespace-pre-wrap">
+                  {formatClientTextForDisplay(message.content)}
                 </p>
-                {message.role === "CLIENT" &&
-                  renderPlayButton(message.id, message.content, "client message")}
               </div>
-              <p className="whitespace-pre-wrap">
-                {formatClientTextForDisplay(message.content)}
-              </p>
-            </div>
-          ))}
+            );
+          })}
           {streamingClientText !== null && streamingMessageId && (
             <div className="max-w-[85%] rounded-lg bg-white px-3 py-2 text-sm text-slate-900 shadow-sm">
               <div className="mb-1 flex items-center justify-between gap-2">

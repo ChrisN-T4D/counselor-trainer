@@ -8,20 +8,37 @@ import {
 } from "@/components/practice/talking-head-bridge";
 import type { AvatarCatalogEntry } from "@/lib/visual/avatar-catalog";
 import type { AvatarMood } from "@/lib/visual/types";
+import type { WordTimings } from "@/lib/visual/word-timings";
 
 export type AvatarPlaybackHandle = {
   isReady: () => boolean;
-  speak: (blob: Blob, text: string, mood: AvatarMood) => Promise<void>;
+  speak: (blob: Blob, text: string, mood: AvatarMood, wordTimings?: WordTimings) => Promise<void>;
   stop: () => void;
+};
+
+/** Routes playback to the right avatar by speaker key (couples/family), or the sole avatar. */
+export type AvatarController = {
+  getHandle: (speaker: string | null) => AvatarPlaybackHandle | null;
+  stopAll: () => void;
 };
 
 type ClientPresencePanelProps = {
   avatarEntry: AvatarCatalogEntry | null;
   presenceLabel: string;
-  onReady: (handle: AvatarPlaybackHandle | null) => void;
+  onReady: (key: string, handle: AvatarPlaybackHandle | null) => void;
+  panelKey?: string;
+  title?: string;
+  active?: boolean;
 };
 
-function ClientPresencePanelInner({ avatarEntry, presenceLabel, onReady }: ClientPresencePanelProps) {
+function ClientPresencePanelInner({
+  avatarEntry,
+  presenceLabel,
+  onReady,
+  panelKey = "client",
+  title = "Client",
+  active = false,
+}: ClientPresencePanelProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const bridgeRef = useRef<TalkingHeadBridge | null>(null);
   const [panelState, setPanelState] = useState<TalkingHeadBridgeState>("idle");
@@ -38,18 +55,19 @@ function ClientPresencePanelInner({ avatarEntry, presenceLabel, onReady }: Clien
 
     const handle: AvatarPlaybackHandle = {
       isReady: () => bridge.isReady(),
-      speak: (blob, text, mood) => bridge.speakFromBlob(blob, text, mood),
+      speak: (blob, text, mood, wordTimings) =>
+        bridge.speakFromBlob(blob, text, mood, wordTimings),
       stop: () => bridge.stop(),
     };
 
-    onReady(handle);
+    onReady(panelKey, handle);
 
     return () => {
-      onReady(null);
+      onReady(panelKey, null);
       bridge.destroy();
       bridgeRef.current = null;
     };
-  }, [onReady]);
+  }, [onReady, panelKey]);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -77,9 +95,13 @@ function ClientPresencePanelInner({ avatarEntry, presenceLabel, onReady }: Clien
   }, [avatarEntry]);
 
   return (
-    <div className="overflow-hidden rounded-lg border border-slate-200 bg-slate-900/95">
+    <div
+      className={`overflow-hidden rounded-lg border bg-slate-900/95 transition-colors ${
+        active ? "border-emerald-400 ring-1 ring-emerald-400/60" : "border-slate-200"
+      }`}
+    >
       <div className="flex items-center justify-between border-b border-white/10 px-3 py-2">
-        <p className="text-xs font-medium uppercase tracking-wide text-slate-300">Client</p>
+        <p className="text-xs font-medium uppercase tracking-wide text-slate-300">{title}</p>
         <p className="text-xs text-slate-400" aria-live="polite">
           {presenceLabel}
         </p>

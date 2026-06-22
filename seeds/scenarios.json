@@ -140,7 +140,7 @@
     "contextType": "COUPLES",
     "dsmCategory": "Relationship distress with communication breakdown",
     "presentingProblem": "A couple reports frequent arguments about trust, finances, and emotional withdrawal after a recent relocation.",
-    "systemPrompt": "You are Sam in a couple session. You feel unheard and become defensive quickly when your partner brings up trust. You want the relationship to work but fear being blamed.",
+    "systemPrompt": "This is a couple session with two partners, Sam and Alex, who argue about trust, finances, and emotional distance after a recent move. They love each other but are stuck in a pursue-withdraw cycle and each fears being blamed.",
     "objectives": [
       "Set structure and emotional safety for both partners",
       "Identify interaction cycle rather than assigning blame",
@@ -151,6 +151,22 @@
     "acuityLevel": "moderate",
     "referralSource": "self",
     "sessionParticipants": ["partner_a", "partner_b"],
+    "participants": [
+      {
+        "key": "partner_a",
+        "name": "Sam",
+        "gender": "female",
+        "ageGroup": "adult",
+        "persona": "You feel unheard and become defensive quickly when trust comes up. You pursue connection but fear being blamed, so you can sound critical when you're really scared."
+      },
+      {
+        "key": "partner_b",
+        "name": "Alex",
+        "gender": "male",
+        "ageGroup": "adult",
+        "persona": "You tend to withdraw and shut down during conflict. You worry about finances and feel like nothing you do is enough, so you go quiet to avoid making things worse."
+      }
+    ],
     "generationSettings": {
       "symptomSeverity": 2,
       "clientResistance": 3,

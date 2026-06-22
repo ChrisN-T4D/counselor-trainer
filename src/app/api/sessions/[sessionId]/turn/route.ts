@@ -14,6 +14,11 @@ import {
   buildConversationMessagesWithContext,
   buildSessionContext,
 } from "@/lib/sessions/prompts";
+import {
+  isMultiSpeakerContext,
+  parseParticipantsConfig,
+  parseSpeakerSegments,
+} from "@/lib/sessions/participants";
 import type { ChatMessage } from "@/lib/llm/provider";
 import { CLIENT_DELIVERY_PROMPT } from "@/lib/voice/delivery-tags";
 
@@ -82,8 +87,9 @@ export async function POST(request: Request, { params }: RouteParams) {
     ...practiceSession.messages.map((message) => ({
       role: message.role as "CLIENT" | "THERAPIST",
       content: message.content,
+      speaker: message.speaker,
     })),
-    { role: "THERAPIST" as const, content: therapistMessage.content },
+    { role: "THERAPIST" as const, content: therapistMessage.content, speaker: null },
   ];
 
   let llmMessages: ChatMessage[];
@@ -171,16 +177,31 @@ ${CLIENT_DELIVERY_PROMPT}`,
           );
         }
 
-        const clientMessage = await db.message.create({
-          data: {
-            sessionId,
-            role: "CLIENT",
-            content: trimmed,
-            sequence: nextSequence + 1,
-          },
-        });
+        const participants = isMultiSpeakerContext(practiceSession.scenario.contextType)
+          ? parseParticipantsConfig(practiceSession.scenario.participantsConfig)
+          : null;
 
-        write({ type: "done", clientMessage });
+        const segments = participants
+          ? parseSpeakerSegments(trimmed, participants)
+          : [{ speaker: null as string | null, text: trimmed }];
+
+        const clientMessages = [];
+        for (let i = 0; i < segments.length; i++) {
+          const segment = segments[i];
+          const created = await db.message.create({
+            data: {
+              sessionId,
+              role: "CLIENT",
+              content: segment.text,
+              speaker: segment.speaker ?? null,
+              sequence: nextSequence + 1 + i,
+            },
+          });
+          clientMessages.push(created);
+        }
+
+        // Back-compat single field plus the full attributed list.
+        write({ type: "done", clientMessage: clientMessages[0], clientMessages });
       } catch (error) {
         console.error("LLM turn error:", error);
         const classified = classifyLlmError(error);

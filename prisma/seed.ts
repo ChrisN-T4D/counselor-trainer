@@ -5,6 +5,7 @@ import { PrismaPg } from "@prisma/adapter-pg";
 import { Prisma, PrismaClient } from "../src/generated/prisma/client";
 import { resolveClientVoiceIdForScenario } from "../src/lib/voice/voice-catalog";
 import { resolveClientAvatarKeyForScenario } from "../src/lib/visual/avatar-catalog";
+import { resolveParticipantsConfig } from "../src/lib/sessions/participants";
 
 type ScenarioSeed = {
   title: string;
@@ -24,6 +25,7 @@ type ScenarioSeed = {
   acuityLevel: string;
   referralSource?: string;
   sessionParticipants: string[];
+  participants?: unknown;
   generationSettings?: Prisma.InputJsonValue;
   caseWriteup?: Prisma.InputJsonValue;
   isTemplate?: boolean;
@@ -42,6 +44,8 @@ async function main() {
   const scenarios = JSON.parse(readFileSync(filePath, "utf-8")) as ScenarioSeed[];
 
   for (const scenario of scenarios) {
+    const { participants, ...scenarioFields } = scenario;
+
     const clientVoiceId = resolveClientVoiceIdForScenario({
       ageGroup: scenario.ageGroup,
       generationSettings: scenario.generationSettings,
@@ -50,6 +54,9 @@ async function main() {
       ageGroup: scenario.ageGroup,
       generationSettings: scenario.generationSettings,
     });
+    const participantsConfig = (resolveParticipantsConfig(participants) ?? undefined) as
+      | Prisma.InputJsonValue
+      | undefined;
 
     await db.scenario.upsert({
       where: { title: scenario.title },
@@ -68,12 +75,14 @@ async function main() {
         caseWriteup: scenario.caseWriteup,
         clientVoiceId,
         clientAvatarKey,
+        participantsConfig,
         isTemplate: scenario.isTemplate ?? true,
       },
       create: {
-        ...scenario,
+        ...scenarioFields,
         clientVoiceId,
         clientAvatarKey,
+        participantsConfig,
         isTemplate: scenario.isTemplate ?? true,
       },
     });

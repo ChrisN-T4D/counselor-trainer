@@ -7,6 +7,11 @@ import { formatRelationshipForPrompt } from "@/lib/memory/relationship-state";
 import { formatSafetyForPrompt } from "@/lib/memory/safety-state";
 import { formatRetrievedMemory, retrieveRelevantMemory } from "@/lib/memory/rag";
 import { CLIENT_DELIVERY_PROMPT } from "@/lib/voice/delivery-tags";
+import {
+  isMultiSpeakerContext,
+  parseParticipantsConfig,
+  type ParticipantConfig,
+} from "@/lib/sessions/participants";
 
 export type SessionContextInput = {
   scenario: Scenario;
@@ -97,8 +102,60 @@ Never mention these instructions, sentence limits, rules, or that you are role-p
 
 ${CLIENT_DELIVERY_PROMPT}`;
 
+/** Participants for a couples/family scenario, or null for a single-client session. */
+export function getScenarioParticipants(scenario: Scenario): ParticipantConfig[] | null {
+  if (!isMultiSpeakerContext(scenario.contextType)) {
+    return null;
+  }
+  return parseParticipantsConfig(scenario.participantsConfig);
+}
+
+function buildMultiSpeakerGuardrails(
+  participants: ParticipantConfig[],
+  contextType: string,
+): string {
+  const label = contextType === "FAMILY" ? "family" : "couples";
+  const names = participants.map((p) => p.name);
+  const namesList =
+    names.length <= 1
+      ? names.join("")
+      : `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
+
+  const personas = participants
+    .map((p) => `- ${p.name} (${p.gender}): ${p.persona || "no extra notes"}`)
+    .join("\n");
+
+  const example = participants
+    .slice(0, 2)
+    .map((p) => `[${p.name}] ...what ${p.name} says...`)
+    .join("\n");
+
+  return `You are role-playing ALL of the clients in a ${label} counseling training simulation: ${namesList}.
+Voice each person as a distinct individual with their own personality, perspective, and emotional style. Never merge them into one voice.
+Stay in character at all times. Do not break character or acknowledge that you are an AI.
+Do not diagnose or give therapy advice to the counselor-in-training.
+
+Participants:
+${personas}
+
+REQUIRED OUTPUT FORMAT:
+Prefix every spoken turn with the speaker's name in square brackets, exactly like this:
+${example}
+Depending on the moment, only one participant may respond, or several may respond in turn. Choose what is most natural given what the counselor just said.
+Speak only as the participants in first person. Do not add narration, stage directions, or a "Counselor:" turn.
+Keep each person's turn concise (1-3 sentences unless the moment calls for more).
+Never mention these instructions, sentence limits, rules, or that you are role-playing.
+
+${CLIENT_DELIVERY_PROMPT}`;
+}
+
 export function buildSystemPromptFromContext(context: BuiltSessionContext): string {
-  return `${BASE_GUARDRAILS}
+  const participants = getScenarioParticipants(context.scenario);
+  const guardrails = participants
+    ? buildMultiSpeakerGuardrails(participants, context.scenario.contextType)
+    : BASE_GUARDRAILS;
+
+  return `${guardrails}
 
 Scenario: ${context.scenario.title}
 DSM presentation: ${context.scenario.dsmCategory}
@@ -136,19 +193,30 @@ Behavior rules:
 
 export function buildConversationMessagesWithContext(
   context: BuiltSessionContext,
-  transcript: { role: "CLIENT" | "THERAPIST"; content: string }[],
+  transcript: { role: "CLIENT" | "THERAPIST"; content: string; speaker?: string | null }[],
 ) {
   const windowSize = Number(process.env.MEMORY_TRANSCRIPT_WINDOW ?? 24);
   const windowed = transcript.slice(-windowSize);
+
+  const participants = getScenarioParticipants(context.scenario);
+  const speakerName = (speaker?: string | null) =>
+    participants?.find((p) => p.key === speaker)?.name ?? null;
 
   const messages: { role: "system" | "user" | "assistant"; content: string }[] = [
     { role: "system", content: buildSystemPromptFromContext(context) },
   ];
 
   for (const turn of windowed) {
+    if (turn.role === "THERAPIST") {
+      messages.push({ role: "user", content: turn.content });
+      continue;
+    }
+
+    // Re-attach the speaker tag so the model keeps each persona consistent.
+    const name = speakerName(turn.speaker);
     messages.push({
-      role: turn.role === "THERAPIST" ? "user" : "assistant",
-      content: turn.content,
+      role: "assistant",
+      content: name ? `[${name}] ${turn.content}` : turn.content,
     });
   }
 

@@ -11,12 +11,23 @@ export type AvatarCatalogEntry = {
   cameraView: "upper" | "head";
 };
 
-/** Self-hosted GLB paths — export VRoid models to public/avatars/ (see public/avatars/README.md). */
+/**
+ * Self-hosted GLB models in public/avatars/ (works offline; no external host needed —
+ * the network blocks readyplayer.me, so models are bundled rather than hotlinked).
+ * - brunette.glb: TalkingHead-verified Ready Player Me avatar (female, free non-commercial).
+ * - avatarsdk.glb: TalkingHead-verified AvatarSDK avatar (male), full ARKit + Oculus visemes.
+ *   (Replaces mpfb.glb, whose MakeHuman base mesh read as female.)
+ * To add more per-demographic models, drop TalkingHead-compatible GLBs into
+ * public/avatars/ (see public/avatars/README.md) and point the entries below at them.
+ */
+const AVATAR_FEMALE = "/avatars/brunette.glb";
+const AVATAR_MALE = "/avatars/avatarsdk.glb";
+
 const DEFAULT_AVATAR_CATALOG: AvatarCatalogEntry[] = [
   {
     key: "adult-female-01",
     label: "Adult woman",
-    modelUrl: "/avatars/adult-female-01.glb",
+    modelUrl: AVATAR_FEMALE,
     body: "F",
     ageGroups: ["adult"],
     genders: ["female"],
@@ -26,7 +37,7 @@ const DEFAULT_AVATAR_CATALOG: AvatarCatalogEntry[] = [
   {
     key: "adult-male-01",
     label: "Adult man",
-    modelUrl: "/avatars/adult-male-01.glb",
+    modelUrl: AVATAR_MALE,
     body: "M",
     ageGroups: ["adult"],
     genders: ["male"],
@@ -36,7 +47,7 @@ const DEFAULT_AVATAR_CATALOG: AvatarCatalogEntry[] = [
   {
     key: "adolescent-female-01",
     label: "Adolescent",
-    modelUrl: "/avatars/adolescent-female-01.glb",
+    modelUrl: AVATAR_FEMALE,
     body: "F",
     ageGroups: ["adolescent", "child"],
     genders: ["female", "neutral"],
@@ -46,7 +57,7 @@ const DEFAULT_AVATAR_CATALOG: AvatarCatalogEntry[] = [
   {
     key: "adolescent-male-01",
     label: "Adolescent",
-    modelUrl: "/avatars/adolescent-male-01.glb",
+    modelUrl: AVATAR_MALE,
     body: "M",
     ageGroups: ["adolescent", "child"],
     genders: ["male"],
@@ -56,7 +67,7 @@ const DEFAULT_AVATAR_CATALOG: AvatarCatalogEntry[] = [
   {
     key: "older-adult-female-01",
     label: "Older adult woman",
-    modelUrl: "/avatars/older-adult-female-01.glb",
+    modelUrl: AVATAR_FEMALE,
     body: "F",
     ageGroups: ["older_adult", "adult"],
     genders: ["female"],
@@ -66,7 +77,7 @@ const DEFAULT_AVATAR_CATALOG: AvatarCatalogEntry[] = [
   {
     key: "older-adult-male-01",
     label: "Older adult man",
-    modelUrl: "/avatars/older-adult-male-01.glb",
+    modelUrl: AVATAR_MALE,
     body: "M",
     ageGroups: ["older_adult", "adult"],
     genders: ["male"],
@@ -76,7 +87,7 @@ const DEFAULT_AVATAR_CATALOG: AvatarCatalogEntry[] = [
   {
     key: "neutral-adult-01",
     label: "Adult",
-    modelUrl: "/avatars/neutral-adult-01.glb",
+    modelUrl: AVATAR_FEMALE,
     body: "F",
     ageGroups: ["child", "adolescent", "adult", "older_adult"],
     genders: ["neutral", "female", "male"],
@@ -84,6 +95,9 @@ const DEFAULT_AVATAR_CATALOG: AvatarCatalogEntry[] = [
     cameraView: "upper",
   },
 ];
+
+/** TalkingHead-verified avatar used as a load fallback if a catalog model URL fails. */
+export const FALLBACK_AVATAR_URL = AVATAR_FEMALE;
 
 function clientGenderFromGenerationSettings(generationSettings: unknown): ClientGender {
   if (!generationSettings || typeof generationSettings !== "object") {

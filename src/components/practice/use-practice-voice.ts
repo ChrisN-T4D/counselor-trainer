@@ -1,9 +1,10 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
-import type { AvatarPlaybackHandle } from "@/components/practice/client-presence-panel";
+import type { AvatarController } from "@/components/practice/client-presence-panel";
 import { moodFromClientText } from "@/lib/visual/delivery-tag-mood";
 import type { PracticeViewMode } from "@/lib/visual/types";
+import type { WordTimings } from "@/lib/visual/word-timings";
 import {
   type AudioOutputMode,
   type AudioOutputModeHint,
@@ -26,10 +27,33 @@ type VoiceStatus = {
 const POST_TTS_DELAY_MS = 350;
 const MAX_UTTERANCE_MS = 120_000;
 
+/** Decode the base64 word-timing header returned by /api/tts (for avatar lip-sync). */
+function parseWordTimingsHeader(header: string | null): WordTimings | undefined {
+  if (!header) {
+    return undefined;
+  }
+  try {
+    const json = atob(header);
+    const parsed = JSON.parse(json) as WordTimings;
+    if (Array.isArray(parsed.words) && parsed.words.length > 0) {
+      return parsed;
+    }
+  } catch {
+    // Ignore malformed header; lip-sync falls back to estimation.
+  }
+  return undefined;
+}
+
+export type ClientUtterance = {
+  id: string;
+  text: string;
+  speaker?: string | null;
+};
+
 type UsePracticeVoiceOptions = {
   viewMode?: PracticeViewMode;
   visualEnabled?: boolean;
-  avatarPlaybackRef?: RefObject<AvatarPlaybackHandle | null>;
+  avatarControllerRef?: RefObject<AvatarController | null>;
 };
 
 export function usePracticeVoice(sessionId: string, options: UsePracticeVoiceOptions = {}) {
@@ -50,6 +74,8 @@ export function usePracticeVoice(sessionId: string, options: UsePracticeVoiceOpt
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const audioUrlRef = useRef<string | null>(null);
+  const audioEndResolveRef = useRef<(() => void) | null>(null);
+  const playbackTokenRef = useRef(0);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const mediaStreamRef = useRef<MediaStream | null>(null);
   const chunksRef = useRef<Blob[]>([]);
@@ -66,7 +92,7 @@ export function usePracticeVoice(sessionId: string, options: UsePracticeVoiceOpt
   const voiceStatusRef = useRef(voiceStatus);
   const viewModeRef = useRef(options.viewMode ?? "text");
   const visualEnabledRef = useRef(options.visualEnabled ?? false);
-  const avatarPlaybackRef = options.avatarPlaybackRef;
+  const avatarControllerRef = options.avatarControllerRef;
 
   useEffect(() => {
     viewModeRef.current = options.viewMode ?? "text";
@@ -104,7 +130,9 @@ export function usePracticeVoice(sessionId: string, options: UsePracticeVoiceOpt
   }, []);
 
   const stopPlayback = useCallback(() => {
-    avatarPlaybackRef?.current?.stop();
+    // Invalidate any in-flight playback sequence (couples turns play segments serially).
+    playbackTokenRef.current += 1;
+    avatarControllerRef?.current?.stopAll();
     if (audioRef.current) {
       audioRef.current.pause();
       audioRef.current = null;
@@ -113,8 +141,14 @@ export function usePracticeVoice(sessionId: string, options: UsePracticeVoiceOpt
       URL.revokeObjectURL(audioUrlRef.current);
       audioUrlRef.current = null;
     }
+    // Unblock a pending audio-path awaiter so sequence loops can exit.
+    if (audioEndResolveRef.current) {
+      const resolve = audioEndResolveRef.current;
+      audioEndResolveRef.current = null;
+      resolve();
+    }
     setPlayingMessageId(null);
-  }, [avatarPlaybackRef]);
+  }, [avatarControllerRef]);
 
   useEffect(() => {
     playingMessageIdRef.current = playingMessageId;
@@ -457,28 +491,17 @@ export function usePracticeVoice(sessionId: string, options: UsePracticeVoiceOpt
     };
   }, [releaseMic, stopPlayback]);
 
-  const playClientMessage = useCallback(
-    async (messageId: string, text: string) => {
-      if (!voiceStatus.ttsEnabled || !text.trim() || simulationPausedRef.current) {
-        return;
-      }
-
-      if (playingMessageId === messageId) {
-        interruptClient();
-        return;
-      }
-
-      pauseVoiceTurn();
-      stopPlayback();
-      setVoiceError(null);
+  // Synthesize and play one utterance, routing the voice + avatar to its speaker.
+  // Resolves when playback finishes (or is interrupted via stopPlayback).
+  const speakUtterance = useCallback(
+    async (messageId: string, text: string, speaker: string | null) => {
       setLoadingPlayId(messageId);
-
       try {
         const response = await fetch("/api/tts", {
           method: "POST",
           credentials: "same-origin",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ text, sessionId }),
+          body: JSON.stringify({ text, sessionId, speaker: speaker ?? undefined }),
         });
 
         if (!response.ok) {
@@ -489,70 +512,106 @@ export function usePracticeVoice(sessionId: string, options: UsePracticeVoiceOpt
           throw new Error(data.error ?? "Could not play client voice");
         }
 
+        const wordTimings = parseWordTimingsHeader(response.headers.get("X-Tts-Word-Timings"));
         const blob = await response.blob();
+        const handle = avatarControllerRef?.current?.getHandle(speaker) ?? null;
         const useAvatarPlayback =
-          visualEnabledRef.current &&
-          viewModeRef.current === "avatar" &&
-          avatarPlaybackRef?.current?.isReady();
+          visualEnabledRef.current && viewModeRef.current === "avatar" && handle?.isReady();
 
-        if (useAvatarPlayback && avatarPlaybackRef?.current) {
-          setPlayingMessageId(messageId);
+        setPlayingMessageId(messageId);
 
-          if (shouldEnableVoiceBargeIn(audioOutputModeRef.current)) {
-            void startBargeInMonitor();
-          }
-
-          await avatarPlaybackRef.current.speak(blob, text, moodFromClientText(text));
-          stopPlayback();
-          stopVad();
-          scheduleVoiceTurn();
+        if (useAvatarPlayback && handle) {
+          await handle.speak(blob, text, moodFromClientText(text), wordTimings);
           return;
         }
 
         const url = URL.createObjectURL(blob);
         audioUrlRef.current = url;
-
         const audio = new Audio(url);
         audioRef.current = audio;
-        audio.onended = () => {
-          stopPlayback();
-          stopVad();
-          scheduleVoiceTurn();
-        };
-        audio.onerror = () => {
-          setVoiceError("Audio playback failed");
-          stopPlayback();
-          stopVad();
-          scheduleVoiceTurn();
-        };
 
-        setPlayingMessageId(messageId);
-
-        if (shouldEnableVoiceBargeIn(audioOutputModeRef.current)) {
-          void startBargeInMonitor();
-        }
-
-        await audio.play();
-      } catch (error) {
-        stopPlayback();
-        setVoiceError(error instanceof Error ? error.message : "Could not play client voice");
-        scheduleVoiceTurn();
+        await new Promise<void>((resolve) => {
+          audioEndResolveRef.current = resolve;
+          audio.onended = () => {
+            audioEndResolveRef.current = null;
+            resolve();
+          };
+          audio.onerror = () => {
+            setVoiceError("Audio playback failed");
+            audioEndResolveRef.current = null;
+            resolve();
+          };
+          void audio.play().catch(() => {
+            audioEndResolveRef.current = null;
+            resolve();
+          });
+        });
       } finally {
         setLoadingPlayId(null);
       }
     },
+    [avatarControllerRef, sessionId],
+  );
+
+  const playClientMessages = useCallback(
+    async (utterances: ClientUtterance[]) => {
+      const items = utterances.filter((item) => item.text.trim());
+      if (!voiceStatus.ttsEnabled || items.length === 0 || simulationPausedRef.current) {
+        return;
+      }
+
+      pauseVoiceTurn();
+      stopPlayback();
+      setVoiceError(null);
+
+      const token = playbackTokenRef.current;
+
+      if (shouldEnableVoiceBargeIn(audioOutputModeRef.current)) {
+        void startBargeInMonitor();
+      }
+
+      try {
+        for (const item of items) {
+          if (playbackTokenRef.current !== token) {
+            break;
+          }
+          await speakUtterance(item.id, item.text, item.speaker ?? null);
+        }
+      } catch (error) {
+        setVoiceError(error instanceof Error ? error.message : "Could not play client voice");
+      } finally {
+        if (playbackTokenRef.current === token) {
+          stopPlayback();
+          stopVad();
+          scheduleVoiceTurn();
+        }
+      }
+    },
     [
-      avatarPlaybackRef,
-      interruptClient,
       pauseVoiceTurn,
-      playingMessageId,
       scheduleVoiceTurn,
-      sessionId,
+      speakUtterance,
       startBargeInMonitor,
       stopPlayback,
       stopVad,
       voiceStatus.ttsEnabled,
     ],
+  );
+
+  const playClientMessage = useCallback(
+    async (messageId: string, text: string, speaker: string | null = null) => {
+      if (!voiceStatus.ttsEnabled || !text.trim() || simulationPausedRef.current) {
+        return;
+      }
+
+      if (playingMessageId === messageId) {
+        interruptClient();
+        return;
+      }
+
+      await playClientMessages([{ id: messageId, text, speaker }]);
+    },
+    [interruptClient, playClientMessages, playingMessageId, voiceStatus.ttsEnabled],
   );
 
   const beginVoiceTurn = useCallback(() => {
@@ -598,6 +657,7 @@ export function usePracticeVoice(sessionId: string, options: UsePracticeVoiceOpt
     micPaused,
     simulationPaused,
     playClientMessage,
+    playClientMessages,
     setSessionActive,
     interruptClient,
     setOnAutoSend,

@@ -15,5 +15,14 @@ declare module "@met4citizen/talkinghead/modules/talkinghead.mjs" {
     dispose(): void;
     isSpeaking?: boolean;
     isAudioPlaying?: boolean;
+    // Language -> lip-sync processor map. We inject this manually (see talking-head-bridge.ts)
+    // because TalkingHead's own dynamic import of ./lipsync-<lang>.mjs fails under webpack.
+    lipsync: Record<string, unknown>;
+  }
+}
+
+declare module "@met4citizen/talkinghead/modules/lipsync-en.mjs" {
+  export class LipsyncEn {
+    constructor();
   }
 }

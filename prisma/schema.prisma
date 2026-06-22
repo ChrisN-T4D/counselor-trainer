@@ -87,6 +87,7 @@ model Scenario {
   generationSettings  Json?
   clientVoiceId       String?
   clientAvatarKey     String?
+  participantsConfig  Json?
   isTemplate          Boolean             @default(false)
   sessions            Session[]
   clientCases         ClientCase[]
@@ -181,6 +182,7 @@ model Message {
   sessionId     String
   role          MessageRole
   content       String
+  speaker       String?
   audioBlobPath String?
   sequence      Int
   createdAt     DateTime    @default(now())

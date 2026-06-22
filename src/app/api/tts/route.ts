@@ -3,6 +3,11 @@ import { z } from "zod";
 import { auth } from "@/auth";
 import { db } from "@/lib/db";
 import { createTtsProvider } from "@/lib/voice/factory";
+import type { TtsResult } from "@/lib/voice/tts-provider";
+import {
+  findParticipantByKey,
+  parseParticipantsConfig,
+} from "@/lib/sessions/participants";
 import {
   DEFAULT_FREE_TIER_VOICE_ID,
   listPremadeCatalogVoices,
@@ -43,14 +48,18 @@ async function synthesizeWithVoice(
   tts: ReturnType<typeof createTtsProvider>,
   text: string,
   voiceId: string,
-): Promise<ArrayBuffer> {
-  return tts.synthesize(text, { voiceId });
+): Promise<TtsResult> {
+  if (tts.synthesizeWithTimings) {
+    return tts.synthesizeWithTimings(text, { voiceId });
+  }
+  return { audio: await tts.synthesize(text, { voiceId }) };
 }
 
 const ttsSchema = z.object({
   text: z.string().min(1).max(5000),
   sessionId: z.string().optional(),
   voiceId: z.string().optional(),
+  speaker: z.string().optional(),
 });
 
 export async function POST(request: Request) {
@@ -78,6 +87,7 @@ export async function POST(request: Request) {
       clientVoiceId: string | null;
       ageGroup: string | null;
       generationSettings: unknown;
+      participantsConfig: unknown;
     };
   } | null = null;
 
@@ -90,16 +100,31 @@ export async function POST(request: Request) {
             clientVoiceId: true,
             ageGroup: true,
             generationSettings: true,
+            participantsConfig: true,
           },
         },
       },
     });
   }
 
-  let voiceId = resolveVoiceId({
-    requestedVoiceId: parsed.data.voiceId,
-    scenario: practiceSession?.scenario ?? null,
-  });
+  // For couples/family, route the voice to the specific participant who is speaking.
+  const participantVoiceId = (() => {
+    if (!parsed.data.speaker || !practiceSession) {
+      return null;
+    }
+    const participants = parseParticipantsConfig(practiceSession.scenario.participantsConfig);
+    if (!participants) {
+      return null;
+    }
+    return findParticipantByKey(participants, parsed.data.speaker)?.voiceId ?? null;
+  })();
+
+  const voiceId =
+    participantVoiceId ??
+    resolveVoiceId({
+      requestedVoiceId: parsed.data.voiceId,
+      scenario: practiceSession?.scenario ?? null,
+    });
 
   const fallbacks = [
     voiceId,
@@ -109,12 +134,12 @@ export async function POST(request: Request) {
 
   try {
     const tts = createTtsProvider();
-    let audio: ArrayBuffer | undefined;
+    let result: TtsResult | undefined;
     let lastError: unknown;
 
     for (const candidate of fallbacks) {
       try {
-        audio = await synthesizeWithVoice(tts, parsed.data.text, candidate);
+        result = await synthesizeWithVoice(tts, parsed.data.text, candidate);
         lastError = undefined;
         break;
       } catch (error) {
@@ -126,12 +151,20 @@ export async function POST(request: Request) {
       }
     }
 
-    if (!audio) {
+    if (!result) {
       throw lastError ?? new Error("TTS failed for all premade voice fallbacks");
     }
-    return new NextResponse(audio, {
-      headers: { "Content-Type": "audio/mpeg" },
-    });
+
+    const headers: Record<string, string> = { "Content-Type": "audio/mpeg" };
+    if (result.wordTimings && result.wordTimings.words.length > 0) {
+      // Base64-encoded so the avatar can lip-sync to precise per-word timing.
+      headers["X-Tts-Word-Timings"] = Buffer.from(
+        JSON.stringify(result.wordTimings),
+        "utf8",
+      ).toString("base64");
+    }
+
+    return new NextResponse(result.audio, { headers });
   } catch (error) {
     console.error("TTS error:", error);
     const message = error instanceof Error ? error.message : "TTS provider error";

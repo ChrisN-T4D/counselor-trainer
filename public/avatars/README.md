@@ -1,20 +1,23 @@
 # Client avatar models (GLB)
 
-Place TalkingHead-compatible `.glb` files here. The app maps scenarios to these files via `src/lib/visual/avatar-catalog.ts`.
+Self-hosted TalkingHead-compatible `.glb` files. The app maps scenarios to these files via `src/lib/visual/avatar-catalog.ts`. Models are **bundled here (not hotlinked)** because this network blocks `readyplayer.me` at the DNS level, so remote avatar hosts are unreachable.
 
-## Expected filenames
+## Bundled models
 
-| File | Used for |
-|------|----------|
-| `adult-female-01.glb` | Adult female clients |
-| `adult-male-01.glb` | Adult male clients |
-| `adolescent-female-01.glb` | Child / adolescent female |
-| `adolescent-male-01.glb` | Child / adolescent male |
-| `older-adult-female-01.glb` | Older adult female |
-| `older-adult-male-01.glb` | Older adult male |
-| `neutral-adult-01.glb` | Neutral fallback |
+| File | Source | Used for |
+|------|--------|----------|
+| `brunette.glb` | Ready Player Me (free, non-commercial) | Female + neutral clients |
+| `avatarsdk.glb` | AvatarSDK | Male clients |
 
-You do not need every file on day one — missing models show an error in Avatar view; **Text view always works**.
+Both come from the TalkingHead repo's `avatars/` folder, so they are rig-compatible (Mixamo skeleton + ARKit/Oculus visemes). Female/neutral catalog entries point at `brunette.glb`; male entries point at `avatarsdk.glb`.
+
+> Note: the earlier male model (`mpfb.glb`, MakeHuman) was dropped because its base mesh read as female.
+
+If a model URL fails to load, the avatar falls back to `brunette.glb` (see `talking-head-bridge.ts`). **Text view always works** regardless.
+
+## Adding cleaner / per-demographic models
+
+The bundled male model carries a small MakeHuman logo on its shirt, and faces are generic (not age-matched). For polished, demographic-specific avatars, the simplest path is **Ready Player Me** — but that requires unblocking `readyplayer.me` on your router's DNS filter (ASUS AiProtection / parental controls). Then you can swap the catalog `modelUrl`s back to RPM URLs, or download per-demographic GLBs into this folder using the catalog filename keys.
 
 ## VRoid Studio workflow
 

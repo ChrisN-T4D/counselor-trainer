@@ -5,6 +5,11 @@ import { db } from "@/lib/db";
 import { finalizeSessionMemory } from "@/lib/memory/client-case-service";
 import { formatContextType } from "@/lib/scenarios/labels";
 import { sanitizeScenarioForActiveSession } from "@/lib/scenarios/public-scenario";
+import {
+  isMultiSpeakerContext,
+  parseParticipantsConfig,
+  toPublicParticipants,
+} from "@/lib/sessions/participants";
 
 type RouteParams = { params: Promise<{ sessionId: string }> };
 
@@ -33,18 +38,29 @@ export async function GET(_request: Request, { params }: RouteParams) {
 
   const revealWriteup = practiceSession.status === "COMPLETED";
 
+  // Client-safe participant list (names/avatars only) for couples/family rendering.
+  const participants = isMultiSpeakerContext(practiceSession.scenario.contextType)
+    ? parseParticipantsConfig(practiceSession.scenario.participantsConfig)
+    : null;
+  const publicParticipants = participants ? toPublicParticipants(participants) : null;
+
+  const baseScenario = revealWriteup
+    ? practiceSession.scenario
+    : sanitizeScenarioForActiveSession(practiceSession.scenario);
+
+  // Never leak the server-only config (personas, voice IDs) to the browser.
+  const { participantsConfig: _participantsConfig, ...scenarioRest } = baseScenario as typeof baseScenario & {
+    participantsConfig?: unknown;
+  };
+
   return NextResponse.json({
     session: {
       ...practiceSession,
-      scenario: revealWriteup
-        ? {
-            ...practiceSession.scenario,
-            contextLabel: formatContextType(practiceSession.scenario.contextType),
-          }
-        : {
-            ...sanitizeScenarioForActiveSession(practiceSession.scenario),
-            contextLabel: formatContextType(practiceSession.scenario.contextType),
-          },
+      scenario: {
+        ...scenarioRest,
+        contextLabel: formatContextType(practiceSession.scenario.contextType),
+        participants: publicParticipants,
+      },
     },
   });
 }
