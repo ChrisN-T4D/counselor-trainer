@@ -24,5 +24,11 @@ declare module "@met4citizen/talkinghead/modules/talkinghead.mjs" {
 declare module "@met4citizen/talkinghead/modules/lipsync-en.mjs" {
   export class LipsyncEn {
     constructor();
+    /** Convert a word to Oculus visemes with relative times/durations (ms). */
+    wordsToVisemes(word: string): {
+      visemes: string[];
+      times: number[];
+      durations: number[];
+    };
   }
 }

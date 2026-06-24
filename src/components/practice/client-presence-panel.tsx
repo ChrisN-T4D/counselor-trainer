@@ -29,6 +29,8 @@ type ClientPresencePanelProps = {
   panelKey?: string;
   title?: string;
   active?: boolean;
+  /** When true, drop the panel's own border/background so it can share a container with others. */
+  embedded?: boolean;
 };
 
 function ClientPresencePanelInner({
@@ -38,6 +40,7 @@ function ClientPresencePanelInner({
   panelKey = "client",
   title = "Client",
   active = false,
+  embedded = false,
 }: ClientPresencePanelProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const bridgeRef = useRef<TalkingHeadBridge | null>(null);
@@ -96,17 +99,48 @@ function ClientPresencePanelInner({
 
   return (
     <div
-      className={`overflow-hidden rounded-lg border bg-slate-900/95 transition-colors ${
-        active ? "border-emerald-400 ring-1 ring-emerald-400/60" : "border-slate-200"
+      className={`relative transition-colors ${
+        embedded
+          ? `h-full ${active ? "ring-2 ring-inset ring-emerald-400" : ""}`
+          : `overflow-hidden rounded-lg border bg-slate-900/95 ${
+              active ? "border-emerald-400 ring-1 ring-emerald-400/60" : "border-slate-200"
+            }`
       }`}
     >
-      <div className="flex items-center justify-between border-b border-white/10 px-3 py-2">
-        <p className="text-xs font-medium uppercase tracking-wide text-slate-300">{title}</p>
-        <p className="text-xs text-slate-400" aria-live="polite">
+      <div
+        className={
+          embedded
+            ? "absolute inset-x-0 top-0 z-10 flex items-center justify-between px-3 py-2"
+            : "flex items-center justify-between border-b border-white/10 px-3 py-2"
+        }
+      >
+        <p
+          className={
+            embedded
+              ? "rounded bg-slate-900/55 px-2 py-0.5 text-xs font-medium uppercase tracking-wide text-white backdrop-blur-sm"
+              : "text-xs font-medium uppercase tracking-wide text-slate-300"
+          }
+        >
+          {title}
+        </p>
+        <p
+          className={
+            embedded
+              ? `rounded px-2 py-0.5 text-xs backdrop-blur-sm ${
+                  active ? "bg-emerald-500/80 text-white" : "bg-slate-900/55 text-slate-200"
+                }`
+              : "text-xs text-slate-400"
+          }
+          aria-live="polite"
+        >
           {presenceLabel}
         </p>
       </div>
-      <div className="relative aspect-[4/3] w-full bg-gradient-to-b from-slate-800 to-slate-950">
+      <div
+        className={`relative aspect-[4/3] w-full ${
+          embedded ? "" : "bg-gradient-to-b from-slate-800 to-slate-950"
+        }`}
+      >
         <div ref={containerRef} className="absolute inset-0" />
         {(panelState === "loading" || panelState === "idle") && (
           <div className="absolute inset-0 flex items-center justify-center bg-slate-900/60">

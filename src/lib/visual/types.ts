@@ -1,4 +1,4 @@
-export type PracticeViewMode = "text" | "avatar";
+export type PracticeViewMode = "text" | "avatar" | "room";
 
 export type AvatarMood = "neutral" | "happy" | "sad" | "fear" | "angry" | "love" | "disgust" | "sleep";
 

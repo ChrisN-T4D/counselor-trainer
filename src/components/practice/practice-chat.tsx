@@ -2,11 +2,21 @@
 
 import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+import dynamic from "next/dynamic";
 import {
   ClientPresencePanel,
   type AvatarController,
   type AvatarPlaybackHandle,
 } from "@/components/practice/client-presence-panel";
+
+const TherapyScene = dynamic(() => import("@/components/practice/scene/therapy-scene"), {
+  ssr: false,
+  loading: () => (
+    <div className="flex aspect-[16/9] items-center justify-center rounded-lg border border-slate-200 bg-slate-900 text-sm text-slate-300">
+      Preparing 3D room…
+    </div>
+  ),
+});
 import { usePracticeVoice } from "@/components/practice/use-practice-voice";
 import { usePracticeViewMode } from "@/components/practice/use-practice-view-mode";
 import { PracticeViewToggle } from "@/components/practice/practice-view-toggle";
@@ -541,6 +551,19 @@ export function PracticeChat({ sessionId }: { sessionId: string }) {
         : "In session";
 
   const showAvatarPanel = visualStatus.visualEnabled && viewModeHydrated && viewMode === "avatar";
+  const showRoom = visualStatus.visualEnabled && viewModeHydrated && viewMode === "room";
+
+  const sceneParticipants = (
+    participants
+      ? participants.map((participant) => ({
+          key: participant.key,
+          name: participant.name,
+          avatarUrl: (getAvatarCatalogEntry(participant.avatarKey) ?? avatarEntry)?.modelUrl ?? "",
+        }))
+      : avatarEntry
+        ? [{ key: SINGLE_AVATAR_KEY, name: "Client", avatarUrl: avatarEntry.modelUrl }]
+        : []
+  ).filter((participant) => participant.avatarUrl.length > 0);
 
   return (
     <div className="flex flex-col gap-4">
@@ -584,18 +607,28 @@ export function PracticeChat({ sessionId }: { sessionId: string }) {
 
       {showAvatarPanel &&
         (participants ? (
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-            {participants.map((participant) => (
-              <ClientPresencePanel
-                key={participant.key}
-                panelKey={participant.key}
-                avatarEntry={getAvatarCatalogEntry(participant.avatarKey) ?? avatarEntry}
-                title={participant.name}
-                active={playingSpeaker === participant.key}
-                presenceLabel={playingSpeaker === participant.key ? "Speaking" : presenceLabel}
-                onReady={handleAvatarReady}
-              />
-            ))}
+          <div className="relative overflow-hidden rounded-lg border border-slate-200 bg-slate-900">
+            <img
+              src="/scene/therapy-room.jpg"
+              alt=""
+              aria-hidden
+              className="pointer-events-none absolute inset-0 h-full w-full object-cover"
+            />
+            <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-slate-950/60 via-slate-900/10 to-slate-900/30" />
+            <div className="relative grid grid-cols-1 sm:grid-cols-2">
+              {participants.map((participant) => (
+                <ClientPresencePanel
+                  key={participant.key}
+                  panelKey={participant.key}
+                  embedded
+                  avatarEntry={getAvatarCatalogEntry(participant.avatarKey) ?? avatarEntry}
+                  title={participant.name}
+                  active={playingSpeaker === participant.key}
+                  presenceLabel={playingSpeaker === participant.key ? "Speaking" : presenceLabel}
+                  onReady={handleAvatarReady}
+                />
+              ))}
+            </div>
           </div>
         ) : (
           <ClientPresencePanel
@@ -605,6 +638,14 @@ export function PracticeChat({ sessionId }: { sessionId: string }) {
             onReady={handleAvatarReady}
           />
         ))}
+
+      {showRoom && sceneParticipants.length > 0 && (
+        <TherapyScene
+          participants={sceneParticipants}
+          onReady={handleAvatarReady}
+          playingSpeaker={playingSpeaker}
+        />
+      )}
 
       <div className="relative min-h-[420px] rounded-lg border border-slate-200 bg-slate-50 p-4">
         {simulationPaused && (

@@ -11,7 +11,7 @@ export function loadPracticeViewMode(): PracticeViewMode {
   }
 
   const stored = window.localStorage.getItem(STORAGE_KEY);
-  return stored === "avatar" ? "avatar" : "text";
+  return stored === "avatar" || stored === "room" ? stored : "text";
 }
 
 export function savePracticeViewMode(mode: PracticeViewMode) {
@@ -28,14 +28,14 @@ export function usePracticeViewMode(visualEnabled: boolean) {
   }, []);
 
   useEffect(() => {
-    if (!visualEnabled && viewMode === "avatar") {
+    if (!visualEnabled && (viewMode === "avatar" || viewMode === "room")) {
       setViewModeState("text");
     }
   }, [visualEnabled, viewMode]);
 
   const setViewMode = useCallback(
     (mode: PracticeViewMode) => {
-      if (mode === "avatar" && !visualEnabled) {
+      if ((mode === "avatar" || mode === "room") && !visualEnabled) {
         return;
       }
       setViewModeState(mode);

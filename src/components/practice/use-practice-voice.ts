@@ -516,7 +516,9 @@ export function usePracticeVoice(sessionId: string, options: UsePracticeVoiceOpt
         const blob = await response.blob();
         const handle = avatarControllerRef?.current?.getHandle(speaker) ?? null;
         const useAvatarPlayback =
-          visualEnabledRef.current && viewModeRef.current === "avatar" && handle?.isReady();
+          visualEnabledRef.current &&
+          (viewModeRef.current === "avatar" || viewModeRef.current === "room") &&
+          handle?.isReady();
 
         setPlayingMessageId(messageId);
 
