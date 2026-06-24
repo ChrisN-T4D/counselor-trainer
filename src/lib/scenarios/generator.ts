@@ -34,14 +34,26 @@ export const scenarioGenerationInputSchema = z.object({
 
 export type ScenarioGenerationInput = z.infer<typeof scenarioGenerationInputSchema>;
 
+// Coerce the model's gender label into our enum instead of rejecting the whole
+// scenario over capitalization or an out-of-set value (e.g. "Female", "nonbinary").
+const clientGenderSchema = z.preprocess((value) => {
+  const normalized = typeof value === "string" ? value.trim().toLowerCase() : "";
+  if (normalized === "female" || normalized === "f" || normalized === "woman") return "female";
+  if (normalized === "male" || normalized === "m" || normalized === "man") return "male";
+  return "neutral";
+}, z.enum(["female", "male", "neutral"]));
+
+// Maxima are generous on purpose: the prompt asks for depth, so a verbose model
+// run should not get rejected for being slightly long. Minimums still enforce
+// that each field has real content.
 export const generatedScenarioSchema = z.object({
-  title: z.string().min(8).max(120),
-  dsmCategory: z.string().min(3).max(200),
-  presentingProblem: z.string().min(60).max(1500),
-  systemPrompt: z.string().min(120).max(6000),
-  objectives: z.array(z.string().min(8).max(240)).min(3).max(6),
+  title: z.string().min(8).max(300),
+  dsmCategory: z.string().min(3).max(400),
+  presentingProblem: z.string().min(60).max(6000),
+  systemPrompt: z.string().min(120).max(20000),
+  objectives: z.array(z.string().min(8).max(600)).min(3).max(8),
   difficulty: z.string().min(1),
-  clientGender: z.enum(["female", "male", "neutral"]),
+  clientGender: clientGenderSchema,
   caseWriteup: z.object({
     identifyingSnapshot: z.string().min(80),
     presentingConcerns: z.string().min(80),
@@ -143,20 +155,64 @@ function generationOptions(): CompleteOptions {
   };
 }
 
+// Strip Qwen / reasoning-model chain-of-thought so it never contaminates JSON
+// parsing. Some OpenAI-compatible servers stream thinking inline as <think>…</think>
+// in the content channel rather than a separate reasoning field.
+function stripReasoning(content: string): string {
+  return content
+    .replace(/<think>[\s\S]*?<\/think>/gi, "")
+    .replace(/<\/?think>/gi, "")
+    .trim();
+}
+
+// Find the first complete, balanced JSON object, respecting string literals so a
+// brace inside a value doesn't truncate it. More robust than first "{" / last "}".
+function extractBalancedJson(text: string): string | null {
+  const start = text.indexOf("{");
+  if (start < 0) {
+    return null;
+  }
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  for (let i = start; i < text.length; i++) {
+    const char = text[i];
+    if (inString) {
+      if (escaped) {
+        escaped = false;
+      } else if (char === "\\") {
+        escaped = true;
+      } else if (char === '"') {
+        inString = false;
+      }
+      continue;
+    }
+    if (char === '"') {
+      inString = true;
+    } else if (char === "{") {
+      depth++;
+    } else if (char === "}") {
+      depth--;
+      if (depth === 0) {
+        return text.slice(start, i + 1);
+      }
+    }
+  }
+  return null;
+}
+
 function parseLlmJson(content: string): unknown {
-  const trimmed = content.trim();
+  let trimmed = stripReasoning(content);
   if (trimmed.startsWith("```")) {
-    const unwrapped = trimmed.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "");
-    return JSON.parse(unwrapped);
+    trimmed = trimmed.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "").trim();
   }
 
   try {
     return JSON.parse(trimmed);
   } catch {
-    const start = trimmed.indexOf("{");
-    const end = trimmed.lastIndexOf("}");
-    if (start >= 0 && end > start) {
-      return JSON.parse(trimmed.slice(start, end + 1));
+    const balanced = extractBalancedJson(trimmed);
+    if (balanced) {
+      return JSON.parse(balanced);
     }
     throw new SyntaxError("Could not parse JSON from model response");
   }
@@ -183,8 +239,24 @@ export async function generateScenarioFromSettingsStreaming(
 
   onProgress({ percent: 88, stage: "parsing" });
 
-  const parsed = parseLlmJson(accumulated);
-  const scenario = generatedScenarioSchema.parse(parsed);
+  let scenario: GeneratedScenario;
+  try {
+    scenario = generatedScenarioSchema.parse(parseLlmJson(accumulated));
+  } catch (error) {
+    // Surface what the model actually produced so format failures are diagnosable
+    // from logs (issue paths + a bounded snippet, never the full payload).
+    const issues =
+      error instanceof z.ZodError
+        ? error.issues.map((i) => `${i.path.join(".") || "(root)"}: ${i.message}`)
+        : [error instanceof Error ? error.message : String(error)];
+    console.error("Scenario parse/validation failed", {
+      issues,
+      rawLength: accumulated.length,
+      rawHead: accumulated.slice(0, 600),
+      rawTail: accumulated.slice(-300),
+    });
+    throw error;
+  }
   const clientVoiceId = resolveClientVoiceIdForScenario({
     ageGroup: input.ageGroup,
     generationSettings: { clientGender: scenario.clientGender },
