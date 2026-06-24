@@ -107,7 +107,9 @@ export function usePracticeVoice(sessionId: string, options: UsePracticeVoiceOpt
   const [transcribing, setTranscribing] = useState(false);
   const [voiceError, setVoiceError] = useState<string | null>(null);
   const [turnPaused, setTurnPaused] = useState(false);
-  const [simulationPaused, setSimulationPaused] = useState(false);
+  // Sessions open paused: client audio + mic only start when the trainee hits
+  // Resume, so opening a case never auto-plays the last client turn.
+  const [simulationPaused, setSimulationPaused] = useState(true);
   const [affectDebug, setAffectDebug] = useState<AffectDebug | null>(null);
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
@@ -125,7 +127,7 @@ export function usePracticeVoice(sessionId: string, options: UsePracticeVoiceOpt
   const sessionActiveRef = useRef(false);
   const playingMessageIdRef = useRef<string | null>(null);
   const turnPausedRef = useRef(false);
-  const simulationPausedRef = useRef(false);
+  const simulationPausedRef = useRef(true);
   const onAutoSendRef = useRef<((text: string) => void | Promise<void>) | null>(null);
   const emotionRef = useRef<EmotionStateController | null>(null);
   const affectIntervalRef = useRef<number | null>(null);

@@ -196,6 +196,15 @@ export function PracticeChat({ sessionId }: { sessionId: string }) {
     setSessionActive(practiceSession?.status === "ACTIVE");
   }, [practiceSession?.status, setSessionActive]);
 
+  // Active sessions open paused (Resume starts audio + replays the last client
+  // turn). Completed sessions have no live loop, so un-pause them on load to keep
+  // the per-message Play buttons usable for review.
+  useEffect(() => {
+    if (practiceSession?.status && practiceSession.status !== "ACTIVE") {
+      resumeSimulation();
+    }
+  }, [practiceSession?.status, resumeSimulation]);
+
   useEffect(() => {
     async function loadSession() {
       try {
@@ -467,6 +476,10 @@ export function PracticeChat({ sessionId }: { sessionId: string }) {
   async function handleEndSession() {
     setEnding(true);
     setError(null);
+
+    // Cut off any in-flight client audio, mic capture, and realtime/affect loops
+    // immediately so nothing keeps playing as we leave for the review page.
+    setSessionActive(false);
 
     const response = await fetch(`/api/sessions/${sessionId}`, {
       method: "PATCH",
