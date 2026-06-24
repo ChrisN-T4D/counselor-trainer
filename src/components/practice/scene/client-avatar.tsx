@@ -6,9 +6,12 @@ import { useEffect, useMemo, useRef } from "react";
 import { Box3, Quaternion, Vector3, type Bone, type Mesh, type Object3D } from "three";
 import { clone as cloneSkeleton } from "three/addons/utils/SkeletonUtils.js";
 import type { AvatarPlaybackHandle } from "@/components/practice/client-presence-panel";
+import type { ReactionCue } from "@/lib/affect/emotion-state";
+import { clamp01 } from "@/lib/affect/emotion";
 import { VisemePlayer } from "./viseme-player";
 import { SeatedIdle } from "./seated-idle";
 import { GazeController } from "./gaze-controller";
+import { ReactionController } from "./reaction-controller";
 import { applyPoseMap, resolveBody, resolvePose } from "./seated-pose-store";
 
 type Vec3 = [number, number, number];
@@ -176,6 +179,7 @@ export function ClientAvatar({
   const playerRef = useRef<VisemePlayer | null>(null);
   const idleRef = useRef<SeatedIdle | null>(null);
   const gazeRef = useRef<GazeController | null>(null);
+  const reactionRef = useRef<ReactionController | null>(null);
 
   // Expose this avatar's bones to the (dev-only) Pose Editor.
   useEffect(() => {
@@ -214,11 +218,30 @@ export function ClientAvatar({
     // Eye contact + micro-saccades + distress-driven gaze aversion (uses eye
     // bones, or ARKit eyeLook* morphs as a fallback).
     gazeRef.current = new GazeController(root, meshes);
+    // Transient nonverbal reactions (flinch/wince/etc.), layered over expression.
+    reactionRef.current = new ReactionController(meshes);
 
     const handle: AvatarPlaybackHandle = {
       isReady: () => true,
       speak: (blob, text, mood, wordTimings) => player.speak(blob, text, mood, wordTimings),
       stop: () => player.stop(),
+      setAffect: (vector, arousal, rapport) => {
+        // Arousal lightly boosts overall facial gain; clamp keeps it readable.
+        const gain = 0.8 + clamp01(arousal) * 0.4;
+        player.setAffectVector(vector, gain);
+        gazeRef.current?.setAffect(vector, rapport);
+        idleRef.current?.setAffect(vector, arousal);
+      },
+      triggerReaction: (cue: ReactionCue) => {
+        if (ReactionController.isFacialCue(cue)) {
+          reactionRef.current?.triggerReaction(cue);
+          return;
+        }
+        // Motion cues are routed to the idle/gaze controllers.
+        if (cue === "nod") idleRef.current?.triggerNod(1);
+        else if (cue === "shake_head") idleRef.current?.triggerShake(1);
+        else if (cue === "look_away") gazeRef.current?.lookAway();
+      },
     };
     onReady(panelKey, handle);
 
@@ -228,6 +251,8 @@ export function ClientAvatar({
       playerRef.current = null;
       gazeRef.current?.dispose();
       gazeRef.current = null;
+      reactionRef.current?.dispose();
+      reactionRef.current = null;
     };
   }, [root, onReady, panelKey]);
 
@@ -250,6 +275,8 @@ export function ClientAvatar({
     player?.update();
     idleRef.current?.update();
     gazeRef.current?.update(delta, player?.getMood() ?? "neutral");
+    // Reactions add on top of the expression the player just set, so run last.
+    reactionRef.current?.update(delta);
   });
 
   // Whole-body transform offset (baked default + any Pose Editor override) that positions

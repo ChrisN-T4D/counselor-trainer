@@ -106,6 +106,8 @@ model ClientCase {
   relationshipState Json
   safetyState       Json
   therapyGoalProgress Json
+  emotionState      Json?
+  expressivityProfile Json?
   disclosedFacts    Json             @default("[]")
   lastSessionAt     DateTime?
   createdAt         DateTime         @default(now())

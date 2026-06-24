@@ -52,6 +52,10 @@ export function getElevenLabsSttModelId(): string {
   return process.env.ELEVENLABS_STT_MODEL_ID?.trim() || "scribe_v2";
 }
 
+export function getElevenLabsSttRealtimeModelId(): string {
+  return process.env.ELEVENLABS_STT_REALTIME_MODEL_ID?.trim() || "scribe_v2_realtime";
+}
+
 export function elevenLabsHeaders(apiKey: string): HeadersInit {
   return {
     "xi-api-key": apiKey,

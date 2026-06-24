@@ -4,6 +4,7 @@ import type { WordTimings } from "@/lib/visual/word-timings";
 import type { AvatarMood } from "@/lib/visual/types";
 import { getFallbackEngine, getLipSyncEngine } from "@/lib/visual/lipsync/factory";
 import { VISEME_NAMES, type LipSyncEngine, type VisemeTimeline } from "@/lib/visual/lipsync/types";
+import type { EmotionVector } from "@/lib/affect/emotion";
 import { ExpressionController } from "./expression-controller";
 
 const BLINK_NAMES = ["eyeBlinkLeft", "eyeBlinkRight"] as const;
@@ -59,6 +60,10 @@ export class VisemePlayer {
   private blinkClock = 0;
   private lastFrame = 0;
   private mood: AvatarMood = "neutral";
+  // When set (affect channel active), the displayed Ekman vector drives the face
+  // and the coarse per-utterance `mood` no longer touches the expression.
+  private affectVector: EmotionVector | null = null;
+  private affectGain = 1;
 
   constructor(meshes: MorphMesh[]) {
     this.meshes = meshes;
@@ -104,6 +109,16 @@ export class VisemePlayer {
     return this.mood;
   }
 
+  /**
+   * Drive the sustained facial expression from a displayed emotion vector. Pass
+   * `null` to release control back to the coarse per-utterance mood. Once a vector
+   * is set, it persists across utterances (the felt emotion outlives one reply).
+   */
+  setAffectVector(vector: EmotionVector | null, gain = 1) {
+    this.affectVector = vector;
+    this.affectGain = gain;
+  }
+
   private collectTargets(morphName: string): MorphTarget[] {
     const out: MorphTarget[] = [];
     for (const mesh of this.meshes) {
@@ -144,7 +159,7 @@ export class VisemePlayer {
     }
 
     this.mood = mood;
-    this.expression.setMood(mood);
+    if (!this.affectVector) this.expression.setMood(mood);
 
     const arrayBuffer = await blob.arrayBuffer();
     const audioBuffer = await ctx.decodeAudioData(arrayBuffer.slice(0));
@@ -207,7 +222,7 @@ export class VisemePlayer {
     this.mood = "neutral";
     this.clearVisemes();
     this.setJaw(0);
-    this.expression.setMood("neutral");
+    if (!this.affectVector) this.expression.setMood("neutral");
     this.analyser = null;
     this.amplitudeBuffer = null;
     if (this.source) {
@@ -261,6 +276,10 @@ export class VisemePlayer {
     this.lastFrame = now;
 
     this.updateBlink(dt);
+    if (this.affectVector) {
+      // Arousal lightly boosts overall expressiveness; gain carries it in.
+      this.expression.setAffectVector(this.affectVector, this.affectGain);
+    }
     this.expression.update(dt);
 
     if (!this.playing || !this.audioContext) {
@@ -331,7 +350,7 @@ export class VisemePlayer {
     this.mood = "neutral";
     this.clearVisemes();
     this.setJaw(0);
-    this.expression.setMood("neutral");
+    if (!this.affectVector) this.expression.setMood("neutral");
     this.analyser = null;
     this.amplitudeBuffer = null;
     const resolve = this.doneResolve;

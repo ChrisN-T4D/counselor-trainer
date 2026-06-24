@@ -223,6 +223,11 @@ export class TalkingHeadBridge {
     this.resolveSpeakDone();
   }
 
+  /** Coarse sustained mood (used to degrade the richer affect channel). */
+  setMood(mood: AvatarMood) {
+    this.head?.setMood(mood);
+  }
+
   destroy() {
     this.clearSpeakTimer();
     this.resolveSpeakDone();

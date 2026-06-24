@@ -1,4 +1,5 @@
 import { Quaternion, Vector3, type Object3D } from "three";
+import { clamp01, type EmotionVector } from "@/lib/affect/emotion";
 
 // A subtle, looping "seated idle" applied procedurally on top of whatever baked/posed
 // rotation each bone already has. We deliberately avoid loading an external animation
@@ -89,6 +90,17 @@ export class SeatedIdle {
   private fidgetUntil = 0;
   private fidgetStart = 0;
   private nextFidgetAt: number;
+  // Transient head shake (Head yaw) pulse.
+  private shakeUntil = 0;
+  private shakeStart = 0;
+
+  // Sustained posture from affect: slump (sadness) vs recoil/lean-back (fear+disgust),
+  // plus a motion gain from arousal. Eased each frame toward these targets.
+  private slumpTarget = 0;
+  private slump = 0;
+  private recoilTarget = 0;
+  private recoil = 0;
+  private motionGain = 1;
 
   constructor(root: Object3D, seed = "") {
     this.phase0 = seedFromString(seed) * Math.PI * 2;
@@ -134,11 +146,29 @@ export class SeatedIdle {
     this.nextFidgetAt = 10 + Math.random() * 12;
   }
 
+  /**
+   * Set sustained body posture + energy from the displayed affect vector and
+   * arousal: sadness slumps forward, fear/disgust lean the torso back (recoil),
+   * and arousal scales how lively the idle motion reads.
+   */
+  setAffect(vector: EmotionVector, arousal: number) {
+    this.slumpTarget = clamp01(0.7 * (vector.sadness ?? 0));
+    this.recoilTarget = clamp01(0.6 * (vector.fear ?? 0) + 0.4 * (vector.disgust ?? 0));
+    this.motionGain = 0.7 + clamp01(arousal) * 0.7;
+  }
+
   /** Trigger a short "listening" nod now (e.g. when the trainee speaks). */
   triggerNod(strength = 1) {
     const now = performance.now() / 1000 - this.start;
     this.nodStart = now;
     this.nodUntil = now + 0.55 * Math.max(0.5, Math.min(1.5, strength));
+  }
+
+  /** Trigger a short head shake (disagreement / "no"). */
+  triggerShake(strength = 1) {
+    const now = performance.now() / 1000 - this.start;
+    this.shakeStart = now;
+    this.shakeUntil = now + 0.7 * Math.max(0.5, Math.min(1.5, strength));
   }
 
   update() {
@@ -153,6 +183,11 @@ export class SeatedIdle {
     this.headTilt?.update(clock, dt);
     this.headYaw?.update(clock, dt);
 
+    // Ease sustained posture toward affect targets.
+    const postureAlpha = 1 - Math.exp(-dt / 0.8);
+    this.slump += (this.slumpTarget - this.slump) * postureAlpha;
+    this.recoil += (this.recoilTarget - this.recoil) * postureAlpha;
+
     // Schedule occasional auto-nods and fidgets.
     if (clock >= this.nextNodAt) {
       this.triggerNod(0.7 + Math.random() * 0.5);
@@ -166,22 +201,35 @@ export class SeatedIdle {
 
     const nod = this.pulse(clock, this.nodStart, this.nodUntil) * 0.06; // head pitch
     const fidget = this.pulse(clock, this.fidgetStart, this.fidgetUntil) * 0.015;
+    // Two-cycle sine so the shake reads as left-right-left rather than one sweep.
+    const shakeEnv = this.pulse(clock, this.shakeStart, this.shakeUntil);
+    const shake =
+      shakeEnv > 0
+        ? Math.sin(((clock - this.shakeStart) / (this.shakeUntil - this.shakeStart)) * Math.PI * 4) *
+          shakeEnv *
+          0.07
+        : 0;
 
     // Compose every tracked bone: base * oscillators * drift/nod/fidget offsets.
     for (const entry of this.bones) {
       entry.bone.quaternion.copy(entry.base);
       for (const o of entry.oscs) {
-        const angle = Math.sin(clock * Math.PI * 2 * o.freq + o.phase) * o.amplitude;
+        const angle =
+          Math.sin(clock * Math.PI * 2 * o.freq + o.phase) * o.amplitude * this.motionGain;
         this.delta.setFromAxisAngle(o.axis, angle);
         entry.bone.quaternion.multiply(this.delta);
       }
     }
 
+    // Sustained affect posture (forward slump on sadness, back lean on fear/disgust).
+    const spinePitch = this.slump * 0.07 - this.recoil * 0.05;
+
     this.applyOffset("Spine", Z, this.spineLean?.current ?? 0);
+    this.applyOffset("Spine", X, spinePitch);
     this.applyOffset("Spine1", X, fidget);
     this.applyOffset("Head", Z, this.headTilt?.current ?? 0);
-    this.applyOffset("Head", Y, this.headYaw?.current ?? 0);
-    this.applyOffset("Head", X, nod);
+    this.applyOffset("Head", Y, (this.headYaw?.current ?? 0) + shake);
+    this.applyOffset("Head", X, nod + this.slump * 0.05);
     this.applyOffset("Neck", X, nod * 0.4);
   }
 

@@ -5,6 +5,17 @@ import type { AvatarController } from "@/components/practice/client-presence-pan
 import { moodFromClientText } from "@/lib/visual/delivery-tag-mood";
 import type { PracticeViewMode } from "@/lib/visual/types";
 import type { WordTimings } from "@/lib/visual/word-timings";
+import type { EmotionVector } from "@/lib/affect/emotion";
+import {
+  EmotionStateController,
+  type DisplayedAffect,
+  type ReactionCue,
+} from "@/lib/affect/emotion-state";
+import type { ExpressivityProfile } from "@/lib/affect/expressivity-profile";
+import { newTranscriptText, tagReaction } from "@/lib/affect/reaction-tagger";
+import { ListeningController } from "@/components/practice/scene/listening-controller";
+import { RealtimeSttSession } from "@/lib/voice/realtime-stt-client";
+import { BackchannelPlayer } from "@/lib/voice/backchannel";
 import {
   type AudioOutputMode,
   type AudioOutputModeHint,
@@ -20,8 +31,22 @@ import { monitorVoiceActivity } from "@/lib/voice/voice-activity";
 type VoiceStatus = {
   ttsEnabled: boolean;
   sttEnabled: boolean;
+  sttRealtimeEnabled?: boolean;
   ttsError?: string;
   sttError?: string;
+};
+
+// Debounce window before acting on streaming partial transcripts.
+const PARTIAL_DEBOUNCE_MS = 600;
+
+// Dev-only: expose live felt vs displayed affect for the radar overlay.
+const AFFECT_DEBUG = process.env.NEXT_PUBLIC_AFFECT_DEBUG === "1";
+
+export type AffectDebug = {
+  felt: EmotionVector;
+  displayed: EmotionVector;
+  arousal: number;
+  rapport: number;
 };
 
 const POST_TTS_DELAY_MS = 350;
@@ -50,6 +75,18 @@ export type ClientUtterance = {
   speaker?: string | null;
 };
 
+/** The affect payload streamed from the /turn route (the LLM reply's felt state). */
+export type ClientAffectUpdate = {
+  felt: EmotionVector;
+  arousal: number;
+  rapport: number;
+  cues: ReactionCue[];
+  profile: ExpressivityProfile;
+};
+
+// How often the client-side emotion integrator decays toward baseline + repaints.
+const AFFECT_TICK_MS = 150;
+
 type UsePracticeVoiceOptions = {
   viewMode?: PracticeViewMode;
   visualEnabled?: boolean;
@@ -71,6 +108,7 @@ export function usePracticeVoice(sessionId: string, options: UsePracticeVoiceOpt
   const [voiceError, setVoiceError] = useState<string | null>(null);
   const [turnPaused, setTurnPaused] = useState(false);
   const [simulationPaused, setSimulationPaused] = useState(false);
+  const [affectDebug, setAffectDebug] = useState<AffectDebug | null>(null);
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const audioUrlRef = useRef<string | null>(null);
@@ -89,6 +127,15 @@ export function usePracticeVoice(sessionId: string, options: UsePracticeVoiceOpt
   const turnPausedRef = useRef(false);
   const simulationPausedRef = useRef(false);
   const onAutoSendRef = useRef<((text: string) => void | Promise<void>) | null>(null);
+  const emotionRef = useRef<EmotionStateController | null>(null);
+  const affectIntervalRef = useRef<number | null>(null);
+  const listeningCtrlRef = useRef<ListeningController | null>(null);
+  const lastLevelAtRef = useRef(0);
+  const realtimeSttRef = useRef<RealtimeSttSession | null>(null);
+  const partialDebounceRef = useRef<number | null>(null);
+  const lastTaggedPartialRef = useRef("");
+  const tagPartialForReactionsRef = useRef<((text: string) => void) | null>(null);
+  const backchannelRef = useRef<BackchannelPlayer | null>(null);
   const voiceStatusRef = useRef(voiceStatus);
   const viewModeRef = useRef(options.viewMode ?? "text");
   const visualEnabledRef = useRef(options.visualEnabled ?? false);
@@ -127,7 +174,120 @@ export function usePracticeVoice(sessionId: string, options: UsePracticeVoiceOpt
   const stopVad = useCallback(() => {
     vadStopRef.current?.();
     vadStopRef.current = null;
+    listeningCtrlRef.current?.stop();
+    if (partialDebounceRef.current !== null) {
+      window.clearTimeout(partialDebounceRef.current);
+      partialDebounceRef.current = null;
+    }
+    realtimeSttRef.current?.stop();
+    realtimeSttRef.current = null;
   }, []);
+
+  // Push the integrator's displayed affect to the active avatar handle.
+  const pushDisplayedAffect = useCallback(
+    (displayed: DisplayedAffect) => {
+      const handle = avatarControllerRef?.current?.getHandle(null) ?? null;
+      handle?.setAffect?.(displayed.vector, displayed.arousal, displayed.rapport);
+      if (AFFECT_DEBUG && emotionRef.current) {
+        setAffectDebug({
+          felt: emotionRef.current.getState().felt,
+          displayed: displayed.vector,
+          arousal: displayed.arousal,
+          rapport: displayed.rapport,
+        });
+      }
+    },
+    [avatarControllerRef],
+  );
+
+  const stopAffectLoop = useCallback(() => {
+    if (affectIntervalRef.current !== null) {
+      window.clearInterval(affectIntervalRef.current);
+      affectIntervalRef.current = null;
+    }
+  }, []);
+
+  // Decay felt emotion toward baseline on a steady tick (independent of the 3D
+  // rAF) so the face keeps relaxing between turns even while the trainee speaks.
+  const startAffectLoop = useCallback(() => {
+    if (affectIntervalRef.current !== null) return;
+    let last = performance.now();
+    affectIntervalRef.current = window.setInterval(() => {
+      const controller = emotionRef.current;
+      if (!controller) return;
+      const now = performance.now();
+      const dt = (now - last) / 1000;
+      last = now;
+      controller.update(dt);
+    }, AFFECT_TICK_MS);
+  }, []);
+
+  const ensureListeningController = useCallback((): ListeningController => {
+    if (!backchannelRef.current) backchannelRef.current = new BackchannelPlayer();
+    if (!listeningCtrlRef.current) {
+      listeningCtrlRef.current = new ListeningController({
+        onArousalNudge: (delta) => emotionRef.current?.nudgeArousal(delta),
+        onNod: () => {
+          const handle = avatarControllerRef?.current?.getHandle(null) ?? null;
+          handle?.triggerReaction?.("nod");
+          // Pause-aligned (onNod fires on a speech falling edge), rate-limited,
+          // and never while the client is the one speaking.
+          if (playingMessageIdRef.current === null) backchannelRef.current?.play();
+        },
+      });
+    }
+    return listeningCtrlRef.current;
+  }, [avatarControllerRef]);
+
+  const stopRealtimeStt = useCallback(() => {
+    if (partialDebounceRef.current !== null) {
+      window.clearTimeout(partialDebounceRef.current);
+      partialDebounceRef.current = null;
+    }
+    realtimeSttRef.current?.stop();
+    realtimeSttRef.current = null;
+    lastTaggedPartialRef.current = "";
+  }, []);
+
+  // Debounced consumer for streaming partial transcripts. The semantic reaction
+  // tagging (lexicon -> appraisal/cues) is applied in `tagPartialForReactions`.
+  const handleRealtimePartial = useCallback((text: string) => {
+    const trimmed = text.trim();
+    if (!trimmed) return;
+    if (partialDebounceRef.current !== null) window.clearTimeout(partialDebounceRef.current);
+    partialDebounceRef.current = window.setTimeout(() => {
+      partialDebounceRef.current = null;
+      const controller = emotionRef.current;
+      if (!controller) return;
+      tagPartialForReactionsRef.current?.(trimmed);
+    }, PARTIAL_DEBOUNCE_MS);
+  }, []);
+
+  /** Fold a reply's reported affect into the client emotion state + fire reactions. */
+  const applyClientAffect = useCallback(
+    (update: ClientAffectUpdate) => {
+      const state = { felt: update.felt, arousal: update.arousal, rapport: update.rapport };
+      let controller = emotionRef.current;
+      if (!controller) {
+        controller = new EmotionStateController({
+          profile: update.profile,
+          initial: state,
+          onDisplayChange: pushDisplayedAffect,
+        });
+        emotionRef.current = controller;
+        startAffectLoop();
+      } else {
+        controller.setProfile(update.profile);
+        controller.loadState(state);
+      }
+
+      if (update.cues.length > 0) {
+        const handle = avatarControllerRef?.current?.getHandle(null) ?? null;
+        for (const cue of update.cues) handle?.triggerReaction?.(cue);
+      }
+    },
+    [avatarControllerRef, pushDisplayedAffect, startAffectLoop],
+  );
 
   const stopPlayback = useCallback(() => {
     // Invalidate any in-flight playback sequence (couples turns play segments serially).
@@ -322,12 +482,37 @@ export function usePracticeVoice(sessionId: string, options: UsePracticeVoiceOpt
     setListening(true);
     setVoiceError(null);
 
+    // The client listens while the trainee speaks: nods at pauses + tracks energy.
+    const listener = ensureListeningController();
+    listener.start();
+    lastLevelAtRef.current = performance.now();
+
+    // Realtime STT (optional): stream mic PCM for mid-utterance reactions. The
+    // batch /api/stt path still produces the authoritative final transcript.
+    if (voiceStatusRef.current.sttRealtimeEnabled && emotionRef.current) {
+      stopRealtimeStt();
+      const realtime = new RealtimeSttSession({
+        onPartial: handleRealtimePartial,
+        onError: () => stopRealtimeStt(),
+      });
+      realtimeSttRef.current = realtime;
+      void realtime.start(stream).catch(() => stopRealtimeStt());
+    }
+
     vadStopRef.current = monitorVoiceActivity(stream, {
+      onLevel: (rms) => {
+        const now = performance.now();
+        const dt = (now - lastLevelAtRef.current) / 1000;
+        lastLevelAtRef.current = now;
+        listener.feedLevel(rms, dt);
+      },
       onSpeechStart: () => {
         void startSpeechRecorder();
       },
       onSpeechEnd: () => {
         void (async () => {
+          listener.stop();
+          stopRealtimeStt();
           const text = await finishRecorder();
           stopVad();
           setListening(false);
@@ -340,7 +525,16 @@ export function usePracticeVoice(sessionId: string, options: UsePracticeVoiceOpt
         })();
       },
     });
-  }, [canAutoListen, ensureMicStream, finishRecorder, startSpeechRecorder, stopVad]);
+  }, [
+    canAutoListen,
+    ensureListeningController,
+    ensureMicStream,
+    finishRecorder,
+    handleRealtimePartial,
+    startSpeechRecorder,
+    stopRealtimeStt,
+    stopVad,
+  ]);
 
   const scheduleVoiceTurn = useCallback(() => {
     if (!voiceStatusRef.current.sttEnabled || simulationPausedRef.current) {
@@ -421,9 +615,12 @@ export function usePracticeVoice(sessionId: string, options: UsePracticeVoiceOpt
         turnPausedRef.current = true;
         setTurnPaused(true);
         releaseMic();
+        stopAffectLoop();
+        stopRealtimeStt();
+        emotionRef.current = null;
       }
     },
-    [releaseMic, stopPlayback],
+    [releaseMic, stopAffectLoop, stopRealtimeStt, stopPlayback],
   );
 
   useEffect(() => {
@@ -488,8 +685,40 @@ export function usePracticeVoice(sessionId: string, options: UsePracticeVoiceOpt
     return () => {
       stopPlayback();
       releaseMic();
+      stopAffectLoop();
+      stopRealtimeStt();
     };
-  }, [releaseMic, stopPlayback]);
+  }, [releaseMic, stopAffectLoop, stopPlayback, stopRealtimeStt]);
+
+  // Wire the semantic reaction tagger: appraise newly-heard speech, fold it into
+  // the emotion state, and fire reaction cues gated by the client's reactivity +
+  // rapport (a guarded client reacts less; a warm one reacts more).
+  useEffect(() => {
+    tagPartialForReactionsRef.current = (text: string) => {
+      const controller = emotionRef.current;
+      if (!controller) return;
+
+      const fresh = newTranscriptText(lastTaggedPartialRef.current, text);
+      lastTaggedPartialRef.current = text;
+
+      const result = tagReaction(fresh);
+      if (!result) return;
+
+      controller.applyAppraisal(result.delta);
+
+      if (result.cues.length === 0) return;
+      const profile = controller.getProfile();
+      const rapport = controller.getState().rapport;
+      const fireProbability = Math.min(1, profile.reactivity * (0.4 + rapport * 0.6));
+      const handle = avatarControllerRef?.current?.getHandle(null) ?? null;
+      for (const cue of result.cues) {
+        if (Math.random() <= fireProbability) handle?.triggerReaction?.(cue);
+      }
+    };
+    return () => {
+      tagPartialForReactionsRef.current = null;
+    };
+  }, [avatarControllerRef]);
 
   // Synthesize and play one utterance, routing the voice + avatar to its speaker.
   // Resolves when playback finishes (or is interrupted via stopPlayback).
@@ -668,5 +897,8 @@ export function usePracticeVoice(sessionId: string, options: UsePracticeVoiceOpt
     resumeVoiceTurnAfterSend,
     pauseSimulation,
     resumeSimulation,
+    applyClientAffect,
+    affectDebug,
+    affectDebugEnabled: AFFECT_DEBUG,
   };
 }

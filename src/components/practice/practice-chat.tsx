@@ -21,6 +21,7 @@ import { usePracticeVoice } from "@/components/practice/use-practice-voice";
 import { usePracticeViewMode } from "@/components/practice/use-practice-view-mode";
 import { PracticeViewToggle } from "@/components/practice/practice-view-toggle";
 import { ListeningModePanel, ListeningModeStatusBar } from "@/components/practice/listening-mode-panel";
+import { AffectRadarOverlay } from "@/components/practice/affect-radar-overlay";
 import {
   getAvatarCatalogEntry,
   resolveClientAvatarKeyForScenario,
@@ -28,6 +29,9 @@ import {
 import type { PublicParticipant } from "@/lib/sessions/participants";
 import type { VisualStatus } from "@/lib/visual/types";
 import { formatClientTextForDisplay } from "@/lib/voice/delivery-tags";
+import type { EmotionVector } from "@/lib/affect/emotion";
+import type { ReactionCue } from "@/lib/affect/emotion-state";
+import type { ExpressivityProfile } from "@/lib/affect/expressivity-profile";
 
 const SINGLE_AVATAR_KEY = "__single__";
 
@@ -68,6 +72,7 @@ type PracticeSession = {
 type StreamEvent =
   | { type: "therapist"; message: Message }
   | { type: "delta"; content: string }
+  | { type: "affect"; felt: EmotionVector; arousal: number; rapport: number; cues: ReactionCue[]; profile: ExpressivityProfile }
   | { type: "done"; clientMessage?: Message; clientMessages?: Message[] }
   | { type: "error"; error: string; code?: string };
 
@@ -165,6 +170,9 @@ export function PracticeChat({ sessionId }: { sessionId: string }) {
     resumeVoiceTurnAfterSend,
     pauseSimulation,
     resumeSimulation,
+    applyClientAffect,
+    affectDebug,
+    affectDebugEnabled,
   } = usePracticeVoice(sessionId, {
     viewMode: viewModeHydrated ? viewMode : "text",
     visualEnabled: visualStatus.visualEnabled,
@@ -292,6 +300,14 @@ export function PracticeChat({ sessionId }: { sessionId: string }) {
             } else if (event.type === "delta") {
               accumulated += event.content;
               setStreamingClientText(accumulated);
+            } else if (event.type === "affect") {
+              applyClientAffect({
+                felt: event.felt,
+                arousal: event.arousal,
+                rapport: event.rapport,
+                cues: event.cues,
+                profile: event.profile,
+              });
             } else if (event.type === "done") {
               clientMessages = event.clientMessages ?? (event.clientMessage ? [event.clientMessage] : []);
             } else if (event.type === "error") {
@@ -333,6 +349,7 @@ export function PracticeChat({ sessionId }: { sessionId: string }) {
       }
     },
     [
+      applyClientAffect,
       pauseVoiceTurnForSend,
       playClientMessages,
       practiceSession?.status,
@@ -567,6 +584,7 @@ export function PracticeChat({ sessionId }: { sessionId: string }) {
 
   return (
     <div className="flex flex-col gap-4">
+      {affectDebugEnabled && affectDebug && <AffectRadarOverlay data={affectDebug} />}
       <div className="rounded-lg border border-slate-200 bg-white p-4">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="min-w-0 flex-1">

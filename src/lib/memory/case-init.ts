@@ -18,6 +18,17 @@ import {
   type RiskLevel,
   type SafetyState,
 } from "@/lib/memory/safety-state";
+import {
+  DEFAULT_EXPRESSIVITY_PROFILE,
+  deriveProfile,
+  expressivityProfileSchema,
+  type ExpressivityProfile,
+} from "@/lib/affect/expressivity-profile";
+import {
+  emotionStateSchema,
+  initialEmotionState,
+  type ClientEmotionState,
+} from "@/lib/affect/emotion-state";
 
 export const therapyGoalProgressSchema = z.object({
   objective: z.string(),
@@ -139,6 +150,14 @@ export function initializeTherapyGoals(scenario: Scenario): TherapyGoalProgress[
   }));
 }
 
+export function initializeExpressivityProfile(scenario: Scenario): ExpressivityProfile {
+  return deriveProfile(scenario);
+}
+
+export function initializeEmotionState(scenario: Scenario): ClientEmotionState {
+  return initialEmotionState(deriveProfile(scenario));
+}
+
 export function getCaseWriteup(scenario: Scenario): BiopsychosocialWriteup | null {
   if (isBiopsychosocialWriteup(scenario.caseWriteup)) {
     return scenario.caseWriteup;
@@ -167,6 +186,26 @@ export function parseStoredSafetyState(value: unknown): SafetyState {
 
 export function parseStoredTherapyGoals(value: unknown): TherapyGoalProgress[] {
   return z.array(therapyGoalProgressSchema).parse(value);
+}
+
+/** Parse a stored emotion state, falling back to the profile baseline if absent/invalid. */
+export function parseStoredEmotionState(
+  value: unknown,
+  scenario?: Scenario,
+): ClientEmotionState {
+  const parsed = emotionStateSchema.safeParse(value);
+  if (parsed.success) return parsed.data;
+  return scenario ? initializeEmotionState(scenario) : initialEmotionState(DEFAULT_EXPRESSIVITY_PROFILE);
+}
+
+/** Parse a stored expressivity profile, deriving from the scenario if absent/invalid. */
+export function parseStoredExpressivityProfile(
+  value: unknown,
+  scenario?: Scenario,
+): ExpressivityProfile {
+  const parsed = expressivityProfileSchema.safeParse(value);
+  if (parsed.success) return parsed.data;
+  return scenario ? deriveProfile(scenario) : DEFAULT_EXPRESSIVITY_PROFILE;
 }
 
 export { applyRelationshipDelta, applySafetyDelta };

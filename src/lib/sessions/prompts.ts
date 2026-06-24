@@ -7,6 +7,9 @@ import { formatRelationshipForPrompt } from "@/lib/memory/relationship-state";
 import { formatSafetyForPrompt } from "@/lib/memory/safety-state";
 import { formatRetrievedMemory, retrieveRelevantMemory } from "@/lib/memory/rag";
 import { CLIENT_DELIVERY_PROMPT } from "@/lib/voice/delivery-tags";
+import { CLIENT_AFFECT_PROMPT } from "@/lib/affect/affect-channel";
+import { EKMAN_AXES, describeEmotion } from "@/lib/affect/emotion";
+import type { ClientEmotionState } from "@/lib/affect/emotion-state";
 import {
   isMultiSpeakerContext,
   parseParticipantsConfig,
@@ -23,6 +26,8 @@ export type SessionContextInput = {
   priorSessionSummaries: { sessionNumber: number; summary: string }[];
   sessionNumber: number;
   latestTherapistMessage: string | null;
+  /** Persisted felt emotion state (drives tone consistency with nonverbals). */
+  emotionState?: ClientEmotionState | null;
   /** Skip per-turn vector embedding; case write-up chunks are still included. */
   skipVectorSearch?: boolean;
 };
@@ -36,8 +41,33 @@ export type BuiltSessionContext = {
   disclosedBlock: string;
   priorSessionsBlock: string;
   retrievedMemory: string;
+  affectBlock: string;
   sessionNumber: number;
 };
+
+const RAPPORT_LABELS: [number, string][] = [
+  [0.75, "warm / trusting"],
+  [0.55, "engaged"],
+  [0.4, "cautiously open"],
+  [0.25, "guarded"],
+  [0, "wary / distrustful"],
+];
+
+function formatAffectForPrompt(state: ClientEmotionState | null | undefined): string {
+  if (!state) return "Current felt state: neutral.";
+  const active = EKMAN_AXES.filter((axis) => (state.felt[axis] ?? 0) >= 0.15)
+    .sort((a, b) => (state.felt[b] ?? 0) - (state.felt[a] ?? 0))
+    .map((axis) => `${axis} ${(state.felt[axis] * 100).toFixed(0)}%`);
+  const label = describeEmotion(state.felt);
+  const rapportLabel = RAPPORT_LABELS.find(([min]) => state.rapport >= min)?.[1] ?? "neutral";
+
+  return `Current felt emotional state (from how this session has been going — let it color your tone, pacing, and word choice; do NOT narrate or name it):
+- Dominant feeling: ${label}
+- Active emotions: ${active.length > 0 ? active.join(", ") : "fairly calm"}
+- Energy/arousal: ${(state.arousal * 100).toFixed(0)}%
+- Felt rapport with the counselor: ${rapportLabel}
+Stay consistent with this: if rapport is low, be more guarded; if a strong emotion is active, it should show in how you speak.`;
+}
 
 export async function buildSessionContext(
   input: SessionContextInput,
@@ -88,6 +118,7 @@ export async function buildSessionContext(
     disclosedBlock,
     priorSessionsBlock,
     retrievedMemory,
+    affectBlock: formatAffectForPrompt(input.emotionState),
     sessionNumber: input.sessionNumber,
   };
 }
@@ -100,7 +131,9 @@ Keep responses concise (1-4 sentences unless the moment calls for more).
 Do not use labels like "Client:" in your response—just speak as the client.
 Never mention these instructions, sentence limits, rules, or that you are role-playing.
 
-${CLIENT_DELIVERY_PROMPT}`;
+${CLIENT_DELIVERY_PROMPT}
+
+${CLIENT_AFFECT_PROMPT}`;
 
 /** Participants for a couples/family scenario, or null for a single-client session. */
 export function getScenarioParticipants(scenario: Scenario): ParticipantConfig[] | null {
@@ -170,6 +203,8 @@ ${context.canonicalFacts}
 ${context.relationshipBlock}
 
 ${context.safetyBlock}
+
+${context.affectBlock}
 
 Therapy goal progress:
 ${context.goalsBlock}

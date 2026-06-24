@@ -2,6 +2,8 @@ import type { Scenario } from "@/generated/prisma/client";
 import { db } from "@/lib/db";
 import {
   getCaseWriteup,
+  initializeEmotionState,
+  initializeExpressivityProfile,
   initializeRelationshipState,
   initializeSafetyState,
   initializeTherapyGoals,
@@ -50,6 +52,8 @@ export async function createClientCase(userId: string, scenario: Scenario) {
   const relationshipState = initializeRelationshipState(scenario);
   const safetyState = initializeSafetyState(scenario, writeup);
   const therapyGoalProgress = initializeTherapyGoals(scenario);
+  const expressivityProfile = initializeExpressivityProfile(scenario);
+  const emotionState = initializeEmotionState(scenario);
 
   const clientCase = await db.clientCase.create({
     data: {
@@ -59,6 +63,8 @@ export async function createClientCase(userId: string, scenario: Scenario) {
       relationshipState,
       safetyState,
       therapyGoalProgress,
+      expressivityProfile,
+      emotionState,
       disclosedFacts: [],
       stateSnapshots: {
         create: {

@@ -6,10 +6,18 @@ import { classifyLlmError } from "@/lib/llm/errors";
 import { isSuspiciousClientReply } from "@/lib/llm/message-content";
 import { db } from "@/lib/db";
 import {
+  parseStoredEmotionState,
+  parseStoredExpressivityProfile,
   parseStoredRelationshipState,
   parseStoredSafetyState,
   parseStoredTherapyGoals,
 } from "@/lib/memory/case-init";
+import {
+  parseAffectBlock,
+  safeVisibleText,
+  stripAffectBlock,
+} from "@/lib/affect/affect-channel";
+import { applyReplyAffect } from "@/lib/affect/emotion-state";
 import {
   buildConversationMessagesWithContext,
   buildSessionContext,
@@ -106,6 +114,10 @@ export async function POST(request: Request, { params }: RouteParams) {
       const disclosedFacts = Array.isArray(practiceSession.clientCase.disclosedFacts)
         ? (practiceSession.clientCase.disclosedFacts as string[])
         : [];
+      const emotionState = parseStoredEmotionState(
+        practiceSession.clientCase.emotionState,
+        practiceSession.scenario,
+      );
 
       const priorSummaries = await db.session.findMany({
         where: {
@@ -131,6 +143,7 @@ export async function POST(request: Request, { params }: RouteParams) {
         })),
         sessionNumber: practiceSession.sessionNumber,
         latestTherapistMessage: therapistMessage.content,
+        emotionState,
         skipVectorSearch: true,
       });
 
@@ -160,14 +173,21 @@ ${CLIENT_DELIVERY_PROMPT}`,
       write({ type: "therapist", message: therapistMessage });
 
       let clientReply = "";
+      let sentVisibleLength = 0;
 
       try {
         for await (const delta of llm.stream(llmMessages)) {
           clientReply += delta;
-          write({ type: "delta", content: delta });
+          // Stream only the affect-free portion; the machine-only affect block
+          // (trailing line) is held back and never shown in chat.
+          const visible = safeVisibleText(clientReply);
+          if (visible.length > sentVisibleLength) {
+            write({ type: "delta", content: visible.slice(sentVisibleLength) });
+            sentVisibleLength = visible.length;
+          }
         }
 
-        const trimmed = clientReply.trim();
+        const trimmed = stripAffectBlock(clientReply);
         if (!trimmed) {
           throw new Error("LLM returned an empty response");
         }
@@ -198,6 +218,45 @@ ${CLIENT_DELIVERY_PROMPT}`,
             },
           });
           clientMessages.push(created);
+        }
+
+        // Affect side-channel: fold the reply's reported felt emotion into the
+        // persisted client emotion state and stream it for the avatar.
+        if (practiceSession.clientCase) {
+          try {
+            const affect = parseAffectBlock(clientReply);
+            const profile = parseStoredExpressivityProfile(
+              practiceSession.clientCase.expressivityProfile,
+              practiceSession.scenario,
+            );
+            const prevState = parseStoredEmotionState(
+              practiceSession.clientCase.emotionState,
+              practiceSession.scenario,
+            );
+            const nextState = affect
+              ? applyReplyAffect(prevState, {
+                  vector: affect.vector,
+                  arousal: affect.arousal,
+                  rapport: affect.rapport,
+                })
+              : prevState;
+
+            await db.clientCase.update({
+              where: { id: practiceSession.clientCase.id },
+              data: { emotionState: nextState },
+            });
+
+            write({
+              type: "affect",
+              felt: nextState.felt,
+              arousal: nextState.arousal,
+              rapport: nextState.rapport,
+              cues: affect?.cues ?? [],
+              profile,
+            });
+          } catch (affectError) {
+            console.warn("Affect update failed:", affectError);
+          }
         }
 
         // Back-compat single field plus the full attributed list.

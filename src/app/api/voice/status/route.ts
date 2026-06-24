@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/auth";
 import { getElevenLabsApiKey } from "@/lib/voice/elevenlabs-config";
+import { getRealtimeSttConfig } from "@/lib/voice/factory";
 
 export async function GET() {
   const session = await auth();
@@ -10,15 +11,18 @@ export async function GET() {
 
   const ttsProvider = process.env.TTS_PROVIDER ?? "noop";
   const sttProvider = process.env.STT_PROVIDER ?? "noop";
+  const realtime = getRealtimeSttConfig();
 
   const payload: {
     ttsEnabled: boolean;
     sttEnabled: boolean;
+    sttRealtimeEnabled: boolean;
     ttsError?: string;
     sttError?: string;
   } = {
     ttsEnabled: ttsProvider !== "noop",
     sttEnabled: sttProvider !== "noop",
+    sttRealtimeEnabled: realtime.enabled,
   };
 
   if (ttsProvider === "elevenlabs" || sttProvider === "elevenlabs") {

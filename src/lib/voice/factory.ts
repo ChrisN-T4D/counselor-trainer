@@ -35,3 +35,26 @@ export function createSttProvider(): SttProvider {
       throw new Error(`Unknown STT_PROVIDER: ${provider}`);
   }
 }
+
+export type RealtimeSttConfig = {
+  enabled: boolean;
+  provider: "elevenlabs" | "none";
+  modelId: string;
+};
+
+/**
+ * Realtime STT is an additive Phase-2 layer used only to feed mid-utterance
+ * client reactions; the batch {@link createSttProvider} stays the authoritative
+ * final transcript. Gated by `STT_REALTIME` (defaults off).
+ */
+export function getRealtimeSttConfig(): RealtimeSttConfig {
+  const provider = process.env.STT_REALTIME?.trim().toLowerCase();
+  if (provider === "elevenlabs") {
+    return {
+      enabled: true,
+      provider: "elevenlabs",
+      modelId: process.env.ELEVENLABS_STT_REALTIME_MODEL_ID?.trim() || "scribe_v2_realtime",
+    };
+  }
+  return { enabled: false, provider: "none", modelId: "" };
+}

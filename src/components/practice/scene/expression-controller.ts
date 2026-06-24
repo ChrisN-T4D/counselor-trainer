@@ -1,6 +1,13 @@
 "use client";
 
 import type { AvatarMood } from "@/lib/visual/types";
+import {
+  EMOTION_BLENDSHAPES,
+  clamp01,
+  emotionToBlendshapes,
+  zeroEmotion,
+  type EmotionVector,
+} from "@/lib/affect/emotion";
 
 type MorphMesh = {
   dictionary: Record<string, number>;
@@ -10,76 +17,24 @@ type MorphMesh = {
 type MorphTarget = { influences: number[]; index: number };
 
 /**
- * Per-mood facial blendshape weights (ARKit naming, as exposed by RPM /
- * AvatarSDK avatars). Intensities are deliberately moderate so the face reads as
- * the emotion without grimacing, and so it layers cleanly over visemes.
- *
- * IMPORTANT: this controller only owns brows, eyes (squint/wide), and
- * mouth-corner / nose morphs. The mouth-open shapes (`viseme_*`, `jawOpen`) are
- * owned by {@link VisemePlayer} so the two never fight for the mouth.
+ * Coarse AvatarMood -> Ekman emotion vector, so legacy `setMood` callers (and the
+ * TalkingHead-style mood derived from delivery tags) still work while the engine
+ * renders everything through the same vector path.
  */
-const MOOD_EXPRESSIONS: Record<AvatarMood, Record<string, number>> = {
+const MOOD_TO_VECTOR: Record<AvatarMood, Partial<EmotionVector>> = {
   neutral: {},
-  happy: {
-    mouthSmileLeft: 0.5,
-    mouthSmileRight: 0.5,
-    cheekSquintLeft: 0.25,
-    cheekSquintRight: 0.25,
-    browInnerUp: 0.05,
-  },
-  sad: {
-    browInnerUp: 0.6,
-    mouthFrownLeft: 0.45,
-    mouthFrownRight: 0.45,
-    eyeSquintLeft: 0.12,
-    eyeSquintRight: 0.12,
-    mouthShrugLower: 0.15,
-  },
-  fear: {
-    browInnerUp: 0.5,
-    browOuterUpLeft: 0.35,
-    browOuterUpRight: 0.35,
-    eyeWideLeft: 0.5,
-    eyeWideRight: 0.5,
-    mouthStretchLeft: 0.2,
-    mouthStretchRight: 0.2,
-  },
-  angry: {
-    browDownLeft: 0.6,
-    browDownRight: 0.6,
-    mouthPressLeft: 0.35,
-    mouthPressRight: 0.35,
-    noseSneerLeft: 0.25,
-    noseSneerRight: 0.25,
-    eyeSquintLeft: 0.2,
-    eyeSquintRight: 0.2,
-  },
-  love: {
-    mouthSmileLeft: 0.35,
-    mouthSmileRight: 0.35,
-    cheekSquintLeft: 0.2,
-    cheekSquintRight: 0.2,
-    browInnerUp: 0.1,
-  },
-  disgust: {
-    noseSneerLeft: 0.5,
-    noseSneerRight: 0.5,
-    browDownLeft: 0.35,
-    browDownRight: 0.35,
-    mouthShrugUpper: 0.25,
-    eyeSquintLeft: 0.2,
-    eyeSquintRight: 0.2,
-  },
-  sleep: {
-    eyeSquintLeft: 0.3,
-    eyeSquintRight: 0.3,
-    browInnerUp: 0.1,
-  },
+  happy: { enjoyment: 1 },
+  love: { enjoyment: 0.7 },
+  sad: { sadness: 1 },
+  fear: { fear: 1 },
+  angry: { anger: 1 },
+  disgust: { disgust: 1 },
+  sleep: { sadness: 0.25 },
 };
 
-/** Every morph any mood touches — the set we ease toward/away from each frame. */
+/** Every morph the emotion templates can touch — the set we ease toward/away from. */
 const ALL_EXPRESSION_MORPHS = Array.from(
-  new Set(Object.values(MOOD_EXPRESSIONS).flatMap((m) => Object.keys(m))),
+  new Set(Object.values(EMOTION_BLENDSHAPES).flatMap((m) => Object.keys(m))),
 );
 
 // How fast the face eases toward its target expression (seconds, ~time constant).
@@ -87,14 +42,15 @@ const EASE_TAU = 0.28;
 
 /**
  * Eases an avatar's emotional expression (brows / eyes / mouth-corners) toward a
- * mood-driven target and back to rest, defensively driving only morphs that
- * exist on the given meshes. Designed to be `update(dt)`-driven alongside the
- * viseme player so the two layer without conflict.
+ * target driven by an Ekman emotion **vector** (felt ⊙ gain = displayed) and back
+ * to rest, defensively driving only morphs that exist on the given meshes.
+ * `update(dt)`-driven alongside the viseme player so the two layer without
+ * conflict (mouth-open shapes stay owned by the player).
  */
 export class ExpressionController {
   private readonly targets: Map<string, MorphTarget[]> = new Map();
   private readonly current: Map<string, number> = new Map();
-  private mood: AvatarMood = "neutral";
+  private goal: Record<string, number> = {};
 
   constructor(meshes: MorphMesh[]) {
     for (const name of ALL_EXPRESSION_MORPHS) {
@@ -110,9 +66,20 @@ export class ExpressionController {
     }
   }
 
-  /** Set the expression to ease toward. Reverts to `neutral` between utterances. */
+  /** Drive the face from a displayed emotion vector. `gain` scales overall intensity. */
+  setAffectVector(vector: EmotionVector, gain = 1) {
+    const blended = emotionToBlendshapes(vector);
+    const goal: Record<string, number> = {};
+    for (const [morph, weight] of Object.entries(blended)) {
+      goal[morph] = clamp01(weight * gain);
+    }
+    this.goal = goal;
+  }
+
+  /** Back-compat: set a coarse mood, mapped onto the vector path. */
   setMood(mood: AvatarMood) {
-    this.mood = mood;
+    const vector = { ...zeroEmotion(), ...MOOD_TO_VECTOR[mood] } as EmotionVector;
+    this.setAffectVector(vector, 1);
   }
 
   /** Names of expression morphs actually present on this avatar (dev/probe use). */
@@ -122,12 +89,11 @@ export class ExpressionController {
 
   update(dt: number) {
     if (this.targets.size === 0) return;
-    const goal = MOOD_EXPRESSIONS[this.mood] ?? {};
     // Exponential smoothing toward the target weight (frame-rate independent).
     const alpha = dt > 0 ? 1 - Math.exp(-dt / EASE_TAU) : 1;
 
     for (const [name, targets] of this.targets) {
-      const want = goal[name] ?? 0;
+      const want = this.goal[name] ?? 0;
       const prev = this.current.get(name) ?? 0;
       const next = prev + (want - prev) * alpha;
       this.current.set(name, next);
@@ -137,6 +103,6 @@ export class ExpressionController {
 
   /** Ease everything back to rest immediately on the next frames. */
   reset() {
-    this.mood = "neutral";
+    this.goal = {};
   }
 }

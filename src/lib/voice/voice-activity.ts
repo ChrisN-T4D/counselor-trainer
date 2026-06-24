@@ -17,6 +17,8 @@ export type VoiceActivityOptions = {
   minSpeechMs?: number;
   onSpeechStart?: () => void;
   onSpeechEnd?: () => void;
+  /** Per-poll mic level (RMS 0..~1) — used to drive client listening reactions. */
+  onLevel?: (rms: number) => void;
 };
 
 function computeRms(samples: Float32Array): number {
@@ -63,6 +65,8 @@ export function monitorVoiceActivity(
     const rms = computeRms(samples);
     const now = performance.now();
     const pitchHz = estimatePitchHz(samples, audioContext.sampleRate);
+
+    options.onLevel?.(rms);
 
     if (rms >= threshold) {
       prosodySamples = trimProsodyWindow(

@@ -9,12 +9,45 @@ import {
 import type { AvatarCatalogEntry } from "@/lib/visual/avatar-catalog";
 import type { AvatarMood } from "@/lib/visual/types";
 import type { WordTimings } from "@/lib/visual/word-timings";
+import type { EmotionVector } from "@/lib/affect/emotion";
+import { dominantAxis } from "@/lib/affect/emotion";
+import type { ReactionCue } from "@/lib/affect/emotion-state";
 
 export type AvatarPlaybackHandle = {
   isReady: () => boolean;
   speak: (blob: Blob, text: string, mood: AvatarMood, wordTimings?: WordTimings) => Promise<void>;
   stop: () => void;
+  /**
+   * Drive sustained affect from a displayed Ekman vector + arousal + rapport.
+   * Optional: the rich 3D path implements it; the TalkingHead bridge degrades to
+   * a coarse mood.
+   */
+  setAffect?: (vector: EmotionVector, arousal: number, rapport: number) => void;
+  /** Fire a transient nonverbal reaction. Optional (rich path only). */
+  triggerReaction?: (cue: ReactionCue) => void;
 };
+
+/** Coarse fallback: pick the avatar mood that best matches a displayed affect vector. */
+export function moodFromAffectVector(vector: EmotionVector): AvatarMood {
+  const { axis, value } = dominantAxis(vector);
+  if (value < 0.2) return "neutral";
+  switch (axis) {
+    case "anger":
+    case "contempt":
+      return "angry";
+    case "disgust":
+      return "disgust";
+    case "fear":
+    case "surprise":
+      return "fear";
+    case "sadness":
+      return "sad";
+    case "enjoyment":
+      return "happy";
+    default:
+      return "neutral";
+  }
+}
 
 /** Routes playback to the right avatar by speaker key (couples/family), or the sole avatar. */
 export type AvatarController = {
@@ -61,6 +94,9 @@ function ClientPresencePanelInner({
       speak: (blob, text, mood, wordTimings) =>
         bridge.speakFromBlob(blob, text, mood, wordTimings),
       stop: () => bridge.stop(),
+      // TalkingHead has no blendshape vector control here, so degrade affect to a
+      // coarse sustained mood and drop transient reactions.
+      setAffect: (vector) => bridge.setMood(moodFromAffectVector(vector)),
     };
 
     onReady(panelKey, handle);
