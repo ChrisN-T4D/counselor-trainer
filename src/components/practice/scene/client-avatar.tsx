@@ -8,6 +8,7 @@ import { clone as cloneSkeleton } from "three/addons/utils/SkeletonUtils.js";
 import type { AvatarPlaybackHandle } from "@/components/practice/client-presence-panel";
 import { VisemePlayer } from "./viseme-player";
 import { SeatedIdle } from "./seated-idle";
+import { GazeController } from "./gaze-controller";
 import { applyPoseMap, resolveBody, resolvePose } from "./seated-pose-store";
 
 type Vec3 = [number, number, number];
@@ -174,6 +175,7 @@ export function ClientAvatar({
   }, [scene, seated, url]);
   const playerRef = useRef<VisemePlayer | null>(null);
   const idleRef = useRef<SeatedIdle | null>(null);
+  const gazeRef = useRef<GazeController | null>(null);
 
   // Expose this avatar's bones to the (dev-only) Pose Editor.
   useEffect(() => {
@@ -205,6 +207,13 @@ export function ClientAvatar({
 
     const player = new VisemePlayer(meshes);
     playerRef.current = player;
+    // Pre-load the lip-sync engine (e.g. Rhubarb WASM) now, while the avatar
+    // mounts, so the first spoken reply isn't delayed. No-op for the rule engine.
+    player.warmup();
+
+    // Eye contact + micro-saccades + distress-driven gaze aversion (uses eye
+    // bones, or ARKit eyeLook* morphs as a fallback).
+    gazeRef.current = new GazeController(root, meshes);
 
     const handle: AvatarPlaybackHandle = {
       isReady: () => true,
@@ -217,6 +226,8 @@ export function ClientAvatar({
       onReady(panelKey, null);
       player.dispose();
       playerRef.current = null;
+      gazeRef.current?.dispose();
+      gazeRef.current = null;
     };
   }, [root, onReady, panelKey]);
 
@@ -234,9 +245,11 @@ export function ClientAvatar({
     };
   }, [root, seated, panelKey]);
 
-  useFrame(() => {
-    playerRef.current?.update();
+  useFrame((_, delta) => {
+    const player = playerRef.current;
+    player?.update();
     idleRef.current?.update();
+    gazeRef.current?.update(delta, player?.getMood() ?? "neutral");
   });
 
   // Whole-body transform offset (baked default + any Pose Editor override) that positions

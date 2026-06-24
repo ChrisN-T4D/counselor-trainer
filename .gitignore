@@ -36,6 +36,13 @@ yarn-error.log*
 .env.*.local
 !.env.example
 
+# internal planning / cost docs — keep local, not in the repo
+/docs/services-and-costs.md
+
+# lip-sync (Rhubarb WASM) runtime assets — regenerated from node_modules by
+# scripts/copy-lipsync-assets.mjs on postinstall; the 36 MB data file is huge.
+/public/lipsync/
+
 # vercel
 .vercel
 
