@@ -5,6 +5,7 @@ import {
   getScenarioMaxTokens,
   getScenarioModel,
 } from "@/lib/llm/config";
+import { LlmResponseError } from "@/lib/llm/errors";
 import type { ChatMessage, CompleteOptions, LlmProvider } from "@/lib/llm/provider";
 import {
   estimateDraftProgress,
@@ -238,6 +239,17 @@ export async function generateScenarioFromSettingsStreaming(
   }
 
   onProgress({ percent: 88, stage: "parsing" });
+
+  if (!accumulated.trim()) {
+    console.error("Scenario generation produced no content", {
+      model: options.model,
+      maxTokens,
+    });
+    throw new LlmResponseError(
+      "The model returned no content (it may have spent the token budget on hidden reasoning). " +
+        "Set OPENAI_REASONING_MODE=off or raise OPENAI_MAX_TOKENS, then try again.",
+    );
+  }
 
   let scenario: GeneratedScenario;
   try {

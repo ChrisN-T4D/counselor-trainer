@@ -37,9 +37,6 @@ export function shouldAppendNoThink(
   messages: ChatMessage[],
   options?: CompleteOptions,
 ): boolean {
-  if (options?.generation) {
-    return false;
-  }
   if (!isReasoningModel(model)) {
     return false;
   }
@@ -49,6 +46,15 @@ export function shouldAppendNoThink(
     return false;
   }
   if (mode === "off") {
+    return true;
+  }
+
+  // Long-form / JSON generation (scenarios, consolidation) is consumed as a
+  // single streamed content blob. With thinking on, reasoning models can spend
+  // the entire token budget on hidden reasoning (delivered on a separate
+  // reasoning channel) and emit no content — producing an empty response. Skip
+  // thinking for generation so the model answers directly.
+  if (options?.generation) {
     return true;
   }
 
