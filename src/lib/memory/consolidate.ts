@@ -1,5 +1,6 @@
 import { z } from "zod";
 import type { Scenario } from "@/generated/prisma/client";
+import { getStructuredModel } from "@/lib/llm/config";
 import { createLlmProvider } from "@/lib/llm/factory";
 import {
   applyRelationshipDelta,
@@ -94,13 +95,16 @@ Rules:
 - Update disclosedToTherapist flags only if therapist asked appropriately and client would plausibly disclose.
 - If safety screening was missed, do not mark SI/substances as disclosed.`;
 
-  const raw = await llm.complete([
-    {
-      role: "system",
-      content: "You analyze counseling sessions for training simulations. Output strict JSON only.",
-    },
-    { role: "user", content: prompt },
-  ]);
+  const raw = await llm.complete(
+    [
+      {
+        role: "system",
+        content: "You analyze counseling sessions for training simulations. Output strict JSON only.",
+      },
+      { role: "user", content: prompt },
+    ],
+    { model: getStructuredModel(), jsonMode: true, generation: true },
+  );
 
   return consolidationResultSchema.parse(parseLlmJson(raw));
 }

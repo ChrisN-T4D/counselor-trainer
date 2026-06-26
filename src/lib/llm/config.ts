@@ -93,10 +93,26 @@ export function getScenarioMaxTokens(): number {
   return Number.isFinite(value) && value > 500 ? value : 8192;
 }
 
+/**
+ * Model for structured JSON tasks (scenario generation, memory consolidation).
+ * The in-session client brain (OPENAI_MODEL) is typically an uncensored roleplay
+ * model that is poor at strict JSON, so these tasks route to a dedicated
+ * instruction-following model instead (e.g. a dolphin variant).
+ */
+export function getStructuredModel(): string {
+  return (
+    process.env.OPENAI_JSON_MODEL?.trim() ||
+    process.env.OPENAI_SCENARIO_MODEL?.trim() ||
+    process.env.OPENAI_MODEL?.trim() ||
+    "llama3.1"
+  );
+}
+
 /** Optional faster/smaller model for one-shot scenario JSON (falls back to OPENAI_MODEL). */
 export function getScenarioModel(): string {
   return (
     process.env.OPENAI_SCENARIO_MODEL?.trim() ||
+    process.env.OPENAI_JSON_MODEL?.trim() ||
     process.env.OPENAI_MODEL?.trim() ||
     "llama3.1"
   );

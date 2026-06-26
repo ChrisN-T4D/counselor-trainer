@@ -39,6 +39,13 @@ type VoiceStatus = {
 // Debounce window before acting on streaming partial transcripts.
 const PARTIAL_DEBOUNCE_MS = 600;
 
+// Browser WebRTC processing — filters background noise/echo before VAD and STT.
+const MIC_CAPTURE_CONSTRAINTS: MediaTrackConstraints = {
+  echoCancellation: true,
+  noiseSuppression: true,
+  autoGainControl: true,
+};
+
 // Dev-only: expose live felt vs displayed affect for the radar overlay.
 const AFFECT_DEBUG = process.env.NEXT_PUBLIC_AFFECT_DEBUG === "1";
 
@@ -392,7 +399,9 @@ export function usePracticeVoice(sessionId: string, options: UsePracticeVoiceOpt
     }
 
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: MIC_CAPTURE_CONSTRAINTS,
+      });
       mediaStreamRef.current = stream;
       return stream;
     } catch (error) {
